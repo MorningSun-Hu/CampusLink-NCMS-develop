@@ -1,0 +1,11 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[database]
+driver = "sqlite"
+url = "data/campuslink.db"
+
+[security]
+fingerprint_seed = "replace-me"
+aes_key_rotation_days = 30

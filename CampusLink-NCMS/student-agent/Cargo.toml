@@ -1,0 +1,3 @@
+[workspace]
+members = ["agent-core", "campus-guard", "campus-lock"]
+resolver = "2"
