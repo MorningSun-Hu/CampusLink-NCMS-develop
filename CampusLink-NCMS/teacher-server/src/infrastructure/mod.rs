@@ -1,3 +1,3 @@
-pub mod database;
+pub mod device_repository;
 
-pub use database::create_sqlite_pool;
+pub use device_repository::*;

@@ -1,5 +1,6 @@
 mod app;
 mod api;
+mod domain;
 mod infrastructure;
 
 use anyhow::Result;
@@ -12,7 +13,6 @@ use infrastructure::create_sqlite_pool;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -21,18 +21,14 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // 加载配置
     let config = Config::load()?;
     info!("Configuration loaded successfully");
 
-    // 创建数据库连接池
     let pool = create_sqlite_pool(&config.database.url).await?;
     info!("Database connection pool created");
 
-    // 创建应用
-    let app = create_app(&config, &pool).await;
+    let app = create_app(&pool).await;
 
-    // 启动服务
     let addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting server on {}", addr);
 
