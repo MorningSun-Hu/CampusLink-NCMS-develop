@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package campuslink.ncms.v1;
+
+import "common.proto";
+
+// 心跳请求
+message HeartbeatRequest {
+    MessageMeta meta = 1;
+    string device_id = 2;
+    ModeType current_mode = 3;
+    string online_status = 4;
+    string agent_version = 5;
+}
+
+// 心跳响应
+message HeartbeatResponse {
+    MessageMeta meta = 1;
+    AckCode code = 2;
+    string message = 3;
+    uint32 next_interval_seconds = 4;
+}

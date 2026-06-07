@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package campuslink.ncms.v1;
+
+import "common.proto";
+
+// 模式切换指令
+message ModeSwitchCommand {
+    MessageMeta meta = 1;
+    string command_id = 2;
+    string target_device_id = 3;
+    ModeType target_mode = 4;
+    int64 effective_at = 5;
+    string operator_name = 6;
+}
+
+// 模式切换确认
+message ModeSwitchAck {
+    MessageMeta meta = 1;
+    string command_id = 2;
+    string device_id = 3;
+    AckCode code = 4;
+    string message = 5;
+    ModeType applied_mode = 6;
+}

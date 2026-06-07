@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package campuslink.ncms.v1;
+
+// 课堂模式枚举
+enum ModeType {
+    MODE_OPEN = 0;
+    MODE_TEACHING = 1;
+    MODE_CONDITIONAL_OPEN = 2;
+    MODE_EXAM = 3;
+    MODE_LOCKED = 4;
+}
+
+// 应答码枚举
+enum AckCode {
+    ACK_OK = 0;
+    ACK_REJECTED = 1;
+    ACK_INVALID = 2;
+    ACK_ERROR = 3;
+}
+
+// 消息元数据
+message MessageMeta {
+    string request_id = 1;
+    int64 timestamp = 2;
+    string protocol_version = 3;
+}

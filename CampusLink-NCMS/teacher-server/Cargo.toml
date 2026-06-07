@@ -4,3 +4,42 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Web 框架
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1.35", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# 序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 数据库
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "postgres", "uuid", "chrono"] }
+
+# 配置
+config = "0.14"
+dotenvy = "0.15"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 工具
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
+
+# 加密
+bcrypt = "0.15"
+
+# Protobuf
+prost = "0.12"
+
+# 通道
+tokio-tungstenite = "0.21"
+
+[[bin]]
+name = "teacher-server"
+path = "src/main.rs"
