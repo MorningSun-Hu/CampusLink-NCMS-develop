@@ -1,6 +1,7 @@
 mod config;
 mod register;
 mod heartbeat;
+mod mode;
 
 use anyhow::Result;
 use tracing::{info, error};
@@ -8,7 +9,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::Config;
 use register::collect_and_register;
-use heartbeat::start_heartbeat_loop;
+use mode::handle_mode_switch;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,11 +23,9 @@ async fn main() -> Result<()> {
 
     info!("CampusLink Agent Core starting...");
 
-    // 加载配置
     let mut config = Config::load().unwrap_or_else(|_| Config::default());
     info!("Configuration loaded");
 
-    // 如果未注册，则执行注册
     if config.device_id.is_none() {
         info!("Device not registered, starting registration...");
         match collect_and_register(&mut config).await {
@@ -40,17 +39,12 @@ async fn main() -> Result<()> {
         info!("Device already registered: {}", config.device_id.as_ref().unwrap());
     }
 
-    // 启动心跳循环
-    let ws_url = format!("{}/ws", config.teacher_server_url.replace("http", "ws"));
-    let device_id = config.device_id.clone().unwrap();
-    let interval = config.heartbeat_interval_seconds;
-
-    info!("Starting heartbeat loop, interval: {}s", interval);
-
-    // 这里简化处理，实际应该处理模式切换消息
-    if let Err(e) = start_heartbeat_loop(ws_url, device_id, interval).await {
-        error!("Heartbeat loop error: {}", e);
+    info!("Agent Core ready, current mode: {}", config.current_mode);
+    
+    // P4 占位：实际应该启动 WebSocket 心跳循环并处理模式切换消息
+    // 简化处理，仅打印状态
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        info!("Agent running normally, mode: {}", config.current_mode);
     }
-
-    Ok(())
 }

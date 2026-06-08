@@ -16,6 +16,11 @@ export async function listDevices(onlineStatus?: string) {
   return response.data
 }
 
+export async function switchDeviceMode(deviceId: string, targetMode: string, operatorName: string) {
+  const response = await api.post('/devices/mode', { device_id: deviceId, target_mode: targetMode, operator_name: operatorName })
+  return response.data
+}
+
 export async function healthCheck() {
   const response = await api.get<string>('/health')
   return response.data
