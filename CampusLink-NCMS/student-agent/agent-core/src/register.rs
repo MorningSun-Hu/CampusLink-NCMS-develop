@@ -73,7 +73,7 @@ pub async fn collect_and_register(config: &mut Config) -> Result<()> {
         .map(|ip| ip.to_string())
         .unwrap_or_else(|_| "0.0.0.0".to_string());
     let mac_address = mac_address::get_mac_address()
-        .flatten()
+        .map_err(|e| anyhow::anyhow!("Failed to get MAC address: {}", e))?
         .map(|m| m.to_string())
         .unwrap_or_else(|| "00:00:00:00:00:00".to_string());
     let machine_fingerprint = generate_machine_fingerprint();

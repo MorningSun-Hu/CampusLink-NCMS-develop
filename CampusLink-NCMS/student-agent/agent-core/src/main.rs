@@ -2,6 +2,8 @@ mod config;
 mod register;
 mod heartbeat;
 mod mode;
+mod websocket;
+mod command_handler;
 
 use anyhow::Result;
 use tracing::{info, error};
@@ -9,7 +11,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::Config;
 use register::collect_and_register;
-use mode::handle_mode_switch;
+use websocket::HeartbeatLoop;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,10 +43,10 @@ async fn main() -> Result<()> {
 
     info!("Agent Core ready, current mode: {}", config.current_mode);
     
-    // P4 占位：实际应该启动 WebSocket 心跳循环并处理模式切换消息
-    // 简化处理，仅打印状态
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-        info!("Agent running normally, mode: {}", config.current_mode);
-    }
+    // P5: 启动 WebSocket 心跳循环
+    info!("Starting WebSocket heartbeat loop...");
+    let mut heartbeat_loop = HeartbeatLoop::new(config);
+    
+    heartbeat_loop.run().await?;
+    Ok(())
 }

@@ -23,4 +23,6 @@ tracing-subscriber.workspace = true
 tungstenite.workspace = true
 hostname.workspace = true
 mac_address.workspace = true
-local_ip_address.workspace = true
+local-ip-address.workspace = true
+chrono.workspace = true
+rand.workspace = true

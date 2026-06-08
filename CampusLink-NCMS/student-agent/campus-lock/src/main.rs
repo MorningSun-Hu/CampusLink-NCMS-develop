@@ -2,6 +2,8 @@ use anyhow::Result;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use campus_lock::LockManager;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
@@ -12,10 +14,23 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("CampusLock starting (placeholder)...");
+    info!("CampusLock starting...");
+
+    let mut lock_manager = LockManager::new();
     
-    // P3 阶段占位实现，P4 将实现锁屏功能
-    info!("CampusLock placeholder - waiting for P4 implementation");
+    // 测试锁屏
+    info!("Testing lock...");
+    lock_manager.lock().await?;
+    
+    info!("Lock test completed");
+    
+    // 等待 5 秒后解锁
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    
+    info!("Testing unlock...");
+    lock_manager.unlock().await?;
+    
+    info!("Unlock test completed");
 
     Ok(())
 }
