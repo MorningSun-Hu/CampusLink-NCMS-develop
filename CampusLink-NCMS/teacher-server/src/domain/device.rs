@@ -93,21 +93,10 @@ pub async fn register_device(pool: &SqlitePool, device_code: &str, machine_finge
     .execute(pool)
     .await?;
 
-    let teacher_fingerprint = get_config_value(pool, "teacher_fingerprint").await?.unwrap_or_else(|| "pending_init".to_string());
-    let heartbeat_interval = get_config_value::<i64>(pool, "heartbeat_interval_seconds").await?.unwrap_or(15) as u32;
+    let teacher_fingerprint = crate::infrastructure::device_repository::get_config_value_string(pool, "teacher_fingerprint").await?.unwrap_or_else(|| "pending_init".to_string());
+    let heartbeat_interval = crate::infrastructure::device_repository::get_config_value_u32(pool, "heartbeat_interval_seconds").await?.unwrap_or(15);
 
     Ok((device_id, teacher_fingerprint, "open".to_string(), heartbeat_interval))
-}
-
-pub async fn get_config_value(pool: &SqlitePool, key: &str) -> Result<Option<String>> {
-    let result: Option<String> = sqlx::query_scalar(
-        "SELECT config_value FROM system_configs WHERE config_key = ?"
-    )
-    .bind(key)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(result)
 }
 
 pub async fn list_devices(pool: &SqlitePool) -> Result<Vec<DeviceResponse>> {

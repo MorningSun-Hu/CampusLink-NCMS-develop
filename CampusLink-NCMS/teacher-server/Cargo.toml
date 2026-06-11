@@ -39,6 +39,7 @@ prost = "0.12"
 
 # 通道
 tokio-tungstenite = "0.21"
+futures-util = "0.3"
 
 [[bin]]
 name = "teacher-server"

@@ -3,6 +3,8 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use futures_util::sink::SinkExt;
+use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tracing::{info, error};
@@ -151,11 +153,13 @@ pub async fn ws_handler(
 }
 
 async fn handle_socket(socket: WebSocket, pool: SqlitePool, mut rx: broadcast::Receiver<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use futures_util::stream::StreamExt;
+    
     let (mut sender, mut receiver) = socket.split();
     
     loop {
         tokio::select! {
-            Some(msg) = receiver.recv() => {
+            Some(Ok(msg)) = receiver.next() => {
                 match msg {
                     Message::Text(text) => {
                         info!("Received: {}", text);
