@@ -27,6 +27,9 @@ async fn main() -> Result<()> {
     let pool = create_sqlite_pool(&config.database.url).await?;
     info!("Database connection pool created");
 
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    info!("Database migrations applied");
+
     let app = create_app(&pool).await;
 
     let addr = format!("{}:{}", config.server.host, config.server.port);

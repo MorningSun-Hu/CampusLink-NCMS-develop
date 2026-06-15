@@ -1,5 +1,15 @@
 # P6 执行基线文档：签到与检查流程
 
+## 当前前置状态（2026-06-15）
+
+P0-P5 已完成并通过 Windows 实机联调验证：教师端可启动并自动初始化 SQLite 数据库，学生端可完成设备注册并建立 WebSocket 心跳连接。P6 开发可以基于已验证的设备在线状态、心跳链路和 WebSocket 通道继续推进。
+
+本阶段前置约束：
+- 继续沿用 `teacher-server` 启动时自动迁移数据库的方式。
+- P6 新增表结构应新增独立 migration 文件。
+- Windows 发布包更新后同步覆盖 `dist/windows-release/teacher-server.exe` 与 `dist/windows-release/teacher-server/teacher-server.exe`。
+- WebSocket 新增消息类型时需同时核对教师端发送格式与学生端命令枚举。
+
 ## 一、阶段目标
 
 在 P0-P5 打通 WebSocket 心跳循环与锁屏框架的基础上，实现完整的课堂签到与检查流程，包括：

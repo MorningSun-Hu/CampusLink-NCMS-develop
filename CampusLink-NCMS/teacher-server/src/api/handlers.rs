@@ -168,7 +168,7 @@ async fn handle_socket(socket: WebSocket, pool: SqlitePool, mut rx: broadcast::R
                                 let _ = device::update_heartbeat(&pool, device_id).await;
                             }
                         }
-                        sender.send(Message::Text(r#"{"type":"ack"}"#.to_string())).await?;
+                        sender.send(Message::Text(r#"{"type":"heartbeat_ack","ack_code":0,"message":"ok"}"#.to_string())).await?;
                     }
                     Message::Ping(data) => {
                         sender.send(Message::Pong(data)).await?;

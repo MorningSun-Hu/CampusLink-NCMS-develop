@@ -13,7 +13,7 @@
 - `module-roadmap.md`：阶段路线、优先级和开发顺序总览
 - `development-summary.md`：当前开发总结报告（最新）
 
-## 三、P0-P4 执行文档
+## 三、P0-P6 执行文档
 
 ### 执行基线
 
@@ -22,6 +22,8 @@
 - `p2-teacher-web-execution-plan.md`：P2 教师端 Web 执行基线
 - `p3-student-agent-execution-plan.md`：P3 学生端 Agent 执行基线
 - `p4-mode-switch-execution-plan.md`：P4 模式切换执行基线
+- `p5-execution-plan.md`：P5 WebSocket 心跳与锁屏框架执行基线
+- `p6-execution-plan.md`：P6 签到与检查流程执行基线
 
 ### 落地文档
 
@@ -33,7 +35,12 @@
 - `p0-frontend-page-tasks.md`：P0 前端页面任务单
 - `p4-validation-report.md`：P4 联调验证报告
 
-## 四、使用顺序
+## 四、发布与联调文档
+
+- `../WINDOWS-BUILD-SUMMARY.md`：Windows 发布包构建、联调修复与验证结果
+- `../dist/windows-release/README-windows.md`：Windows 发布包使用说明
+
+## 五、使用顺序
 
 1. 先读 `requirements-analysis.md`
 2. 再读 `development-summary.md`（了解当前进度）

@@ -1,222 +1,150 @@
 # CampusLink-NCMS Windows 发布总结
 
-## 🎉 编译成功
+## 一、构建状态
 
-**日期**: 2026-06-11  
-**平台**: Windows x86_64 (64 位)  
-**工具链**: Rust + mingw-w64
+日期：2026-06-15  
+平台：Windows x86_64  
+工具链：Rust + mingw-w64  
+当前版本：v0.7.1 联调修复版
 
----
+## 二、编译产物
 
-## ✅ 编译产物
-
-### 学生端 (Student Agent)
-
-| 文件 | 大小 | 说明 |
-|------|------|------|
-| `agent-core.exe` | 11MB | 主进程 - 设备注册、心跳、模式接收 |
-| `campus-guard.exe` | 5.5MB | 守护进程 - 监控主进程 |
-| `campus-lock.exe` | 5.5MB | 锁屏进程 - 框架版本 |
-
-### 教师端 (Teacher Server)
+### 教师端
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `teacher-server.exe` | 15MB | 后端服务 - REST API + WebSocket |
+| `teacher-server.exe` | 15MB | 教师端后端服务，提供 REST API 和 WebSocket |
 
-**总计**: 4 个可执行文件，共 37MB
+### 学生端
 
----
+| 文件 | 大小 | 说明 |
+|------|------|------|
+| `agent-core.exe` | 11MB | 学生端主进程，负责设备注册、心跳、模式接收 |
+| `campus-guard.exe` | 5.5MB | 守护进程框架 |
+| `campus-lock.exe` | 5.5MB | 锁屏进程框架 |
 
-## 📦 发布包位置
+发布包位置：
 
-```
+```text
 /workspace/CampusLink-NCMS/dist/windows-release/
-├─ teacher-server/
-│  └─ teacher-server.exe (15MB)
-├─ student-agent/
-│  ├─ agent-core.exe (11MB)
-│  ├─ campus-guard.exe (5.5MB)
-│  └─ campus-lock.exe (5.5MB)
-└─ README_windows.md
 ```
 
----
+## 三、本轮 Windows 联调修复
 
-## 🚀 部署到 Windows
+本轮解决的问题：
 
-### 方式 1: 直接复制
+- 教师端配置字段缺失：补充环境变量优先加载路径，减少配置文件依赖。
+- SQLite 数据库路径错误：`start.bat` 改为按当前目录动态生成数据库路径。
+- SQLite 数据库文件无法打开：启动时自动创建数据库父目录并启用 `create_if_missing(true)`。
+- 首次启动缺表：教师端启动时自动执行嵌入式 SQLx 迁移。
+- Windows 批处理乱码：`install.bat`、`teacher-server/start.bat`、`student-agent/start.bat` 改为 ASCII 内容。
+- WebSocket 心跳响应协议不一致：教师端返回 `heartbeat_ack`，匹配学生端命令枚举。
 
-将 `dist/windows-release/` 目录复制到 Windows 机器：
+## 四、实机验证结果
+
+Windows 路径：
+
+```text
+C:\Users\Hcy\Desktop\windows-release\windows-release
+```
+
+教师端启动验证：
+
+```text
+Configuration loaded successfully
+Database connection pool created
+Database migrations applied
+Starting server on 0.0.0.0:8080
+```
+
+学生端启动验证：
+
+```text
+Device registered successfully
+Registration completed
+Agent Core ready, current mode: open
+Starting WebSocket heartbeat loop
+WebSocket connected
+Heartbeat sent
+Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
+```
+
+当前结论：Windows 教师端服务、SQLite 初始化、学生端注册、WebSocket 连接、30 秒心跳闭环均已验证通过。
+
+## 五、部署方式
+
+### 教师端
 
 ```powershell
-# Windows 上执行
-xcopy \\linux-server\workspace\CampusLink-NCMS\dist\windows-release C:\CampusLink\ /E /Y
+cd C:\Users\Hcy\Desktop\windows-release\windows-release\teacher-server
+.\start.bat
 ```
 
-### 方式 2: 打包下载
+### 学生端
 
-```bash
-cd /workspace/CampusLink-NCMS/dist
-tar -czf windows-release-v0.6.0.tar.gz windows-release/
-```
-
-然后下载 `windows-release-v0.6.0.tar.gz`。
-
----
-
-## 💻 功能状态
-
-### P0-P5 (已实现)
-
-✅ **核心功能**
-- 设备注册与心跳
-- WebSocket 实时通信
-- 模式切换（5 种模式）
-- 在线状态监控
-- 断线重连
-
-✅ **技术栈**
-- 教师端：Rust + Axum + SQLx + SQLite
-- 学生端：Rust + Tokio + WebSocket
-- 通信协议：JSON（可升级到 Protobuf）
-
-### P6 (待集成)
-
-⬜ **签到功能**
-- API 已编写，待编译
-- 前端页面待开发
-
-⬜ **检查告警**
-- 异常报告 API 已编写
-- 图片上传 API 已编写
-- 前端页面待开发
-
----
-
-## 🔍 验证清单
-
-在 Windows 上部署后验证：
-
-### 教师端验证
-
-1. **启动服务**
-   ```powershell
-   cd C:\CampusLink\teacher-server
-   .\teacher-server.exe
-   ```
-
-2. **健康检查**
-   ```bash
-   curl http://localhost:8080/api/health
-   # 应返回：ok
-   ```
-
-3. **数据库创建**
-   ```powershell
-   Test-Path data\campuslink.db
-   # 应返回：True
-   ```
-
-### 学生端验证
-
-1. **配置教师端地址**
-   编辑 `config/config.json`
-
-2. **启动主进程**
-   ```powershell
-   cd C:\CampusLink\student-agent
-   .\agent-core.exe
-   ```
-
-3. **查看设备注册**
-   - 检查日志：`type logs\agent-core.log`
-   - 应看到注册成功消息
-
-4. **验证 WebSocket**
-   - 日志中应看到心跳发送和接收
-
----
-
-## 🔧 故障排查
-
-### 问题 1: "dll not found" 错误
-
-**解决方案**: 安装 Visual C++ 可再发行组件
-
-下载地址：https://aka.ms/vs/17/release/vc_redist.x64.exe
-
-### 问题 2: 无法连接教师端
-
-**检查步骤**:
-1. 确认教师端正在运行
-2. 检查防火墙设置
-3. 验证 IP 地址配置
-4. 测试网络连通性
-
-### 问题 3: 学生端注册失败
-
-**解决方案**:
 ```powershell
-# 删除配置重新注册
-Remove-Item config\config.json
-.\agent-core.exe
+cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
+.\start.bat
 ```
 
----
+### 健康检查
 
-## 📊 跨平台编译说明
+```powershell
+Invoke-RestMethod http://localhost:8080/api/health
+```
 
-### 使用工具
+### 设备列表验证
 
-- **Rust**: 编译器
-- **mingw-w64**: GNU 工具链
-- **target**: `x86_64-pc-windows-gnu`
+```powershell
+Invoke-RestMethod http://localhost:8080/api/devices
+```
 
-### 编译命令
+## 六、编译命令
+
+教师端：
 
 ```bash
-# 学生端
-cd student-agent
-cargo build --release --target x86_64-pc-windows-gnu
-
-# 教师端
 cd teacher-server
 cargo build --release --target x86_64-pc-windows-gnu
 ```
 
-### 编译产物
+学生端：
 
+```bash
+cd student-agent
+cargo build --release --target x86_64-pc-windows-gnu
 ```
-target/x86_64-pc-windows-gnu/release/*.exe
+
+发布目录覆盖教师端：
+
+```bash
+cp teacher-server/target/x86_64-pc-windows-gnu/release/teacher-server.exe dist/windows-release/teacher-server.exe
+cp teacher-server/target/x86_64-pc-windows-gnu/release/teacher-server.exe dist/windows-release/teacher-server/teacher-server.exe
 ```
 
----
+## 七、当前功能状态
 
-## 📈 下一步计划
+P0-P5 已完成：
 
-1. **集成 P6 功能**
-   - 编译签到模块
-   - 编译告警模块
+- 设备注册与心跳
+- WebSocket 实时通信
+- 模式切换基础链路
+- 在线状态监控
+- 30 秒心跳循环
+- 断线重连
+- 锁屏框架
+- Windows 发布包基础部署
 
-2. **前端开发**
-   - 签到管理页面
-   - 告警处理页面
+P6 进行中：
 
-3. **端到端联调**
-   - 验证签到流程
-   - 验证告警流程
+- 签到功能
+- 检查告警
+- 图片上传
+- 教师端 Web 管理页
 
-4. **性能优化**
-   - 内存使用优化
-   - 启动速度优化
+## 八、下一步计划
 
----
-
-**发布状态**: ✅ 可用  
-**测试状态**: ⚠️ 待 Windows 端验证  
-**文档状态**: ✅ 完整
-
----
-
-构建完成时间：2026-06-11
+1. 集成 P6 签到与检查 API。
+2. 开发教师端签到管理页与告警处理页。
+3. 完善学生端异常上报能力。
+4. 增加 Windows Service 或安装器方案。
