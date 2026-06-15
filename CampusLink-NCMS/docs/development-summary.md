@@ -20,7 +20,7 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 | P3 | 学生端 Agent 注册与心跳 | 完成 | Windows 学生端可注册并进入心跳循环 |
 | P4 | 模式切换基础链路 | 完成 | REST API 与 WebSocket 广播链路已落地 |
 | P5 | WebSocket 心跳循环与锁屏框架 | 完成 | 30 秒心跳、断线重连、锁屏框架已落地 |
-| P6 | 签到与检查流程 | 进行中 | 执行基线已生成，功能继续集成 |
+| P6 | 签到与检查流程 | 完成 | API + 学生端 + 前端全链路已实现，待实机联调 |
 
 ## 三、本轮 Windows 联调确认结果
 
@@ -49,6 +49,39 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 ```
 
 ## 四、本轮代码与发布包更新
+
+### P6 新增：签到与检查流程
+
+#### 教师端服务
+
+- 数据库迁移 0006-0008：`attendance_records`、`inspection_records`、`photos` 三张新表
+- `teacher-server/src/api/attendance_handlers.rs`：签到 API（check-in、retroactive、statistics、list）
+- `teacher-server/src/api/inspection_handlers.rs`：检查/告警 API（submit、list、alerts、resolve）
+- `teacher-server/src/api/photo_handlers.rs`：图片上传 API（multipart upload、get、list）
+- `teacher-server/src/domain/attendance.rs`：签到业务逻辑
+- `teacher-server/src/domain/inspection.rs`：检查与告警业务逻辑
+- `teacher-server/src/domain/photo.rs`：图片存储逻辑
+- `teacher-server/Cargo.toml`：axum 新增 `multipart` feature
+
+#### 学生端 Agent
+
+- `agent-core/src/attendance.rs`：签到请求与自动签到
+- `agent-core/src/inspection.rs`：检查提交与异常报告
+- `agent-core/src/student_auth.rs`：登录/登出/状态持久化
+- `agent-core/src/config.rs`：扩展学生身份字段（student_id、token 等）
+- `agent-core/src/main.rs`：启动时自动执行签到
+
+#### 教师端 Web
+
+- `src/views/Attendance.vue`：签到管理页（记录列表、统计、补签弹窗）
+- `src/views/Alerts.vue`：检查告警页（检查记录、告警处理、图片上传与预览）
+- `src/api/attendance.ts`：签到 API 封装
+- `src/api/inspection.ts`：检查/告警 API 封装
+- `src/api/photos.ts`：图片上传 API 封装
+- `src/router/index.ts`：新增 /attendance、/alerts 路由
+- `src/components/Layout.vue`：侧边栏新增签到管理、检查告警
+
+### P0-P5 发布包修复（历史）
 
 ### 教师端服务
 
@@ -98,6 +131,9 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `0003_create_system_configs.sql`
 - `0004_create_operation_logs.sql`
 - `0005_seed_system_configs.sql`
+- `0006_create_attendance_records.sql`
+- `0007_create_inspection_records.sql`
+- `0008_create_photos.sql`
 
 ### 2. 教师端服务
 
@@ -106,6 +142,15 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `POST /api/devices/register`：设备注册
 - `POST /api/devices`：设备列表查询
 - `POST /api/devices/:id/mode`：模式切换
+- `POST /api/attendance/check-in`：学生签到
+- `POST /api/attendance/retroactive`：教师补签
+- `GET /api/attendance`：签到记录列表
+- `GET /api/attendance/statistics`：签到统计
+- `GET /api/inspection`：检查记录列表
+- `POST /api/alerts/:id/resolve`：处理告警
+- `GET /api/alerts`：告警列表
+- `POST /api/photos/upload`：图片上传（multipart）
+- `GET /api/photos/:id`：图片下载预览
 - `/ws`：WebSocket 实时通信入口
 - 自动创建 SQLite 数据库文件
 - 启动时自动执行数据库迁移
@@ -119,6 +164,9 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - 配置持久化
 - WebSocket 连接与 30 秒心跳循环
 - 收到 `heartbeat_ack` 后正常处理
+- 启动时自动签到
+- 检查提交与异常报告（卫生检查、设备检查）
+- 学生登录与登录状态持久化
 
 辅助进程：
 - `campus-guard`：守护进程框架
@@ -131,6 +179,8 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `/dashboard`：仪表盘
 - `/devices`：设备列表与模式切换弹窗
 - `/monitor`：监控总览
+- `/attendance`：签到管理（记录列表、统计、补签）
+- `/alerts`：检查告警（检查记录、告警处理、图片上传与预览）
 
 ## 六、Windows 发布包状态
 
@@ -166,21 +216,23 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 
 ## 七、待完善功能
 
-### P6 阶段
+### P6 联调验证（待实机测试）
 
-- [ ] 签到流程：发起、记录、统计、补签、导出
-- [ ] 检查流程：卫生检查、设备检查、异常分级
-- [ ] 告警处理：告警列表、处理状态、图片上传与预览
-- [ ] 学生登录：账号密码验证、登录状态持久化
-- [ ] 教师端 Web：签到管理页、检查告警页
+- [ ] Windows 端到端签到流程验证
+- [ ] Windows 端到端检查报告验证
+- [ ] Windows 端到端告警处理与图片上传验证
+- [ ] 签到记录导出（CSV/Excel）
+- [ ] 图片压缩功能
 
-### P7 阶段
+### P7 阶段：硬件快照与审计能力
 
-- [ ] 硬件快照与变更告警
-- [ ] 日志中心完善
-- [ ] 异常处理与导出能力
+- [ ] 硬件快照采集（CPU、内存、磁盘、网卡）
+- [ ] 硬件变更检测与告警
+- [ ] 日志中心完善（查询、筛选、导出）
+- [ ] 自定义进程守护策略
+- [ ] 操作审计与异常追溯
 
-### P8 阶段
+### P8 阶段：部署与安全加固
 
 - [ ] Windows Service 注册
 - [ ] 安装器打包
@@ -197,5 +249,5 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 ---
 
 报告更新时间：2026-06-15  
-报告版本：v1.1  
-当前状态：P0-P5 完成，Windows 教师端与学生端注册和 WebSocket 心跳闭环已验证，P6 进行中
+报告版本：v1.2  
+当前状态：P0-P6 开发完成，待 Windows 实机联调，P7 规划中
