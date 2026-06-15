@@ -28,6 +28,16 @@ const router = createRouter({
           name: 'Monitor',
           component: () => import('@/views/Monitor.vue'),
         },
+        {
+          path: 'attendance',
+          name: 'Attendance',
+          component: () => import('@/views/Attendance.vue'),
+        },
+        {
+          path: 'alerts',
+          name: 'Alerts',
+          component: () => import('@/views/Alerts.vue'),
+        },
       ],
     },
   ],

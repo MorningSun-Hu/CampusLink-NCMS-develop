@@ -7,6 +7,11 @@ pub struct Config {
     pub teacher_fingerprint: Option<String>,
     pub current_mode: String,
     pub heartbeat_interval_seconds: u64,
+    pub student_id: Option<String>,
+    pub student_no: Option<String>,
+    pub student_name: Option<String>,
+    pub auth_token: Option<String>,
+    pub token_expires_at: Option<String>,
 }
 
 impl Config {
@@ -17,6 +22,11 @@ impl Config {
             teacher_fingerprint: None,
             current_mode: "open".to_string(),
             heartbeat_interval_seconds: 15,
+            student_id: None,
+            student_no: None,
+            student_name: None,
+            auth_token: None,
+            token_expires_at: None,
         }
     }
 

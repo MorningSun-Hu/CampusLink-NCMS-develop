@@ -19,6 +19,12 @@
           <el-menu-item index="/monitor">
             <span>监控总览</span>
           </el-menu-item>
+          <el-menu-item index="/attendance">
+            <span>签到管理</span>
+          </el-menu-item>
+          <el-menu-item index="/alerts">
+            <span>检查告警</span>
+          </el-menu-item>
         </el-menu>
       </el-aside>
       <el-container>

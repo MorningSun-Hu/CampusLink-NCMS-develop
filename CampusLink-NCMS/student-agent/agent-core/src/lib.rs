@@ -4,6 +4,9 @@ pub mod heartbeat;
 pub mod mode;
 pub mod websocket;
 pub mod command_handler;
+pub mod attendance;
+pub mod inspection;
+pub mod student_auth;
 
 pub use config::Config;
 pub use register::*;

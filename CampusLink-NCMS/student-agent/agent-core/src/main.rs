@@ -4,9 +4,12 @@ mod heartbeat;
 mod mode;
 mod websocket;
 mod command_handler;
+mod attendance;
+mod inspection;
+mod student_auth;
 
 use anyhow::Result;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::Config;
@@ -42,11 +45,14 @@ async fn main() -> Result<()> {
     }
 
     info!("Agent Core ready, current mode: {}", config.current_mode);
-    
-    // P5: 启动 WebSocket 心跳循环
+
+    if let Err(e) = attendance::check_in_auto(&config).await {
+        warn!("Auto check-in failed: {}", e);
+    }
+
     info!("Starting WebSocket heartbeat loop...");
     let mut heartbeat_loop = HeartbeatLoop::new(config);
-    
+
     heartbeat_loop.run().await?;
     Ok(())
 }
