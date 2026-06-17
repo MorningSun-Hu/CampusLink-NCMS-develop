@@ -26,3 +26,4 @@ mac_address.workspace = true
 local-ip-address.workspace = true
 chrono.workspace = true
 rand.workspace = true
+sysinfo.workspace = true

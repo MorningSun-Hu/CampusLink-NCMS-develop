@@ -7,6 +7,8 @@ pub mod command_handler;
 pub mod attendance;
 pub mod inspection;
 pub mod student_auth;
+pub mod hardware;
+pub mod process_guard;
 
 pub use config::Config;
 pub use register::*;

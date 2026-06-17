@@ -38,6 +38,16 @@ const router = createRouter({
           name: 'Alerts',
           component: () => import('@/views/Alerts.vue'),
         },
+        {
+          path: 'hardware',
+          name: 'Hardware',
+          component: () => import('@/views/Hardware.vue'),
+        },
+        {
+          path: 'logs',
+          name: 'Logs',
+          component: () => import('@/views/Logs.vue'),
+        },
       ],
     },
   ],

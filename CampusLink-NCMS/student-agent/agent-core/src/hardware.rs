@@ -1,0 +1,118 @@
+use anyhow::Result;
+use serde::Serialize;
+use sysinfo::System;
+use tracing::info;
+
+use crate::config::Config;
+
+#[derive(Debug, Serialize)]
+pub struct DiskInfo {
+    pub name: String,
+    pub total_bytes: u64,
+    pub free_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GpuInfo {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HardwareSnapshot {
+    pub cpu_model: String,
+    pub cpu_cores: u32,
+    pub total_memory_bytes: u64,
+    pub disk_info: String,
+    pub mac_addresses: String,
+    pub gpu_info: String,
+    pub os_version: String,
+    pub hostname: String,
+}
+
+pub fn collect() -> Result<HardwareSnapshot> {
+    let mut system = System::new_all();
+    system.refresh_all();
+
+    let cpu_model = system
+        .cpus()
+        .first()
+        .map(|c| c.brand().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let cpu_cores = system.physical_core_count().unwrap_or(1) as u32;
+
+    let total_memory_bytes = system.total_memory();
+
+    let disks: Vec<DiskInfo> = sysinfo::Disks::new_with_refreshed_list()
+        .iter()
+        .map(|d| DiskInfo {
+            name: d.name().to_string_lossy().to_string(),
+            total_bytes: d.total_space(),
+            free_bytes: d.available_space(),
+        })
+        .collect();
+
+    let disk_info = serde_json::to_string(&disks).unwrap_or_default();
+
+    let mac_addresses: Vec<String> = mac_address::get_mac_address()
+        .ok()
+        .flatten()
+        .map(|ma| ma.to_string())
+        .into_iter()
+        .collect();
+    let mac_addresses = serde_json::to_string(&mac_addresses).unwrap_or_default();
+
+    let gpu_info = "[]".to_string();
+
+    let os_version = format!("{} {}", sysinfo::System::name().unwrap_or_default(), sysinfo::System::os_version().unwrap_or_default());
+
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    Ok(HardwareSnapshot {
+        cpu_model,
+        cpu_cores,
+        total_memory_bytes,
+        disk_info,
+        mac_addresses,
+        gpu_info,
+        os_version,
+        hostname,
+    })
+}
+
+pub async fn submit(config: &Config) -> Result<()> {
+    let snapshot = collect()?;
+    info!(
+        "Hardware snapshot: cpu={}, cores={}, memory={}MB",
+        snapshot.cpu_model,
+        snapshot.cpu_cores,
+        snapshot.total_memory_bytes / 1024 / 1024
+    );
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/hardware/snapshot", config.teacher_server_url);
+
+    let body = serde_json::json!({
+        "device_id": config.device_id.clone().unwrap_or_default(),
+        "cpu_model": snapshot.cpu_model,
+        "cpu_cores": snapshot.cpu_cores,
+        "total_memory_bytes": snapshot.total_memory_bytes as i64,
+        "disk_info": snapshot.disk_info,
+        "mac_addresses": snapshot.mac_addresses,
+        "gpu_info": snapshot.gpu_info,
+        "os_version": snapshot.os_version,
+        "hostname": snapshot.hostname,
+    });
+
+    let resp = client.post(&url).json(&body).send().await?;
+    let status = resp.status();
+    if status.is_success() {
+        info!("Hardware snapshot submitted successfully");
+    } else {
+        tracing::warn!("Hardware snapshot submit returned HTTP {}", status);
+    }
+
+    Ok(())
+}

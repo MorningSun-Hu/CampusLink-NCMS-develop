@@ -1,7 +1,11 @@
 use anyhow::Result;
 use std::process::Command;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+static EXIT_COUNTER: AtomicU32 = AtomicU32::new(0);
+const MAX_EXIT_COUNT: u32 = 10;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -13,43 +17,80 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("CampusGuard starting...");
+    info!("CampusGuard starting - process supervisor");
+    
+    let guard_processes = vec![
+        GuardedProcess {
+            name: "agent-core",
+            executable: "agent-core",
+            restart_window_secs: 60,
+        },
+        GuardedProcess {
+            name: "campus-lock",
+            executable: "campus-lock",
+            restart_window_secs: 60,
+        },
+    ];
 
     loop {
-        // 检查 agent-core 是否在运行
-        let is_running = check_process_running("agent-core");
+        for proc in &guard_processes {
+            let is_running = check_process_running(proc.name);
+            if !is_running {
+                let count = EXIT_COUNTER.load(Ordering::Relaxed);
+                if count >= MAX_EXIT_COUNT {
+                    error!(
+                        "{} exit count exceeded max ({}), stopping auto-restart",
+                        proc.name, MAX_EXIT_COUNT
+                    );
+                    continue;
+                }
 
-        if !is_running {
-            warn!("agent-core is not running, attempting to restart...");
-            match start_agent_core() {
-                Ok(_) => info!("agent-core restarted successfully"),
-                Err(e) => error!("Failed to restart agent-core: {}", e),
+                warn!("{} is not running, attempting restart...", proc.name);
+                match start_process(proc.executable) {
+                    Ok(_) => {
+                        info!("{} restarted successfully", proc.name);
+                        EXIT_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => error!("Failed to restart {}: {}", proc.name, e),
+                }
             }
-        } else {
-            info!("agent-core is running normally");
         }
 
-        // 每分钟检查一次
-        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+        info!(
+            "Guard check complete: lagent_core={}, campus_lock={}, exit_count={}",
+            check_process_running("agent-core"),
+            check_process_running("campus-lock"),
+            EXIT_COUNTER.load(Ordering::Relaxed),
+        );
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
     }
+}
+
+struct GuardedProcess {
+    name: &'static str,
+    executable: &'static str,
+    restart_window_secs: u64,
 }
 
 fn check_process_running(process_name: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
+        let filter = format!("IMAGENAME eq {}.exe", process_name);
         let output = Command::new("tasklist")
-            .args(&["/FI", &format!("IMAGENAME eq {}.exe", process_name)])
+            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
             .output();
 
         if let Ok(out) = output {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            return stdout.contains(&format!("{}.exe", process_name));
+            return stdout.to_lowercase().contains(&process_name.to_lowercase());
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "windows"))]
     {
         let output = Command::new("pgrep")
+            .arg("-x")
             .arg(process_name)
             .output();
 
@@ -61,8 +102,25 @@ fn check_process_running(process_name: &str) -> bool {
     false
 }
 
-fn start_agent_core() -> Result<()> {
-    Command::new("./agent-core")
-        .spawn()?;
+fn start_process(executable: &str) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &format!("{}.exe", executable)])
+            .spawn()?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let exe = if cfg!(windows) {
+            format!("{}.exe", executable)
+        } else {
+            format!("./{}", executable)
+        };
+        Command::new("sh")
+            .args(["-c", &exe])
+            .spawn()?;
+    }
+
     Ok(())
 }

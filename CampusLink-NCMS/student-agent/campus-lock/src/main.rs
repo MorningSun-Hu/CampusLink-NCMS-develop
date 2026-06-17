@@ -1,8 +1,9 @@
 use anyhow::Result;
-use tracing::info;
+use std::io::{self, Write};
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use campus_lock::LockManager;
+mod locker;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -14,23 +15,25 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("CampusLock starting...");
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: campus-lock <super_password>");
+        std::process::exit(1);
+    }
+    let super_password = &args[1];
 
-    let mut lock_manager = LockManager::new();
-    
-    // 测试锁屏
-    info!("Testing lock...");
-    lock_manager.lock().await?;
-    
-    info!("Lock test completed");
-    
-    // 等待 5 秒后解锁
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-    
-    info!("Testing unlock...");
-    lock_manager.unlock().await?;
-    
-    info!("Unlock test completed");
+    info!("CampusLock starting - screen locked");
 
+    println!("\n==============================================");
+    println!("                SCREEN LOCKED                  ");
+    println!("==============================================");
+    println!("  This workstation has been locked by the      ");
+    println!("  campus management system.                     ");
+    println!("  Enter super password to unlock.               ");
+    println!("==============================================\n");
+
+    locker::run(super_password).await?;
+
+    info!("CampusLock exiting - screen unlocked");
     Ok(())
 }

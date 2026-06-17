@@ -7,6 +7,8 @@ mod command_handler;
 mod attendance;
 mod inspection;
 mod student_auth;
+mod hardware;
+mod process_guard;
 
 use anyhow::Result;
 use tracing::{info, error, warn};
@@ -44,11 +46,16 @@ async fn main() -> Result<()> {
         info!("Device already registered: {}", config.device_id.as_ref().unwrap());
     }
 
-    info!("Agent Core ready, current mode: {}", config.current_mode);
+    if let Err(e) = hardware::submit(&config).await {
+        warn!("Hardware snapshot submit failed: {}", e);
+    }
 
     if let Err(e) = attendance::check_in_auto(&config).await {
         warn!("Auto check-in failed: {}", e);
     }
+
+    let policies = process_guard::sync_policies(&config).await;
+    let _alerts = process_guard::check_and_restart(&policies);
 
     info!("Starting WebSocket heartbeat loop...");
     let mut heartbeat_loop = HeartbeatLoop::new(config);

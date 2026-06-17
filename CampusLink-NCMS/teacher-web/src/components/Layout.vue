@@ -25,6 +25,12 @@
           <el-menu-item index="/alerts">
             <span>检查告警</span>
           </el-menu-item>
+          <el-menu-item index="/hardware">
+            <span>硬件快照</span>
+          </el-menu-item>
+          <el-menu-item index="/logs">
+            <span>日志中心</span>
+          </el-menu-item>
         </el-menu>
       </el-aside>
       <el-container>
