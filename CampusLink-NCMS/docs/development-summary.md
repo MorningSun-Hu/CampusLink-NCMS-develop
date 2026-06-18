@@ -21,6 +21,7 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 | P4 | 模式切换基础链路 | 完成 | REST API 与 WebSocket 广播链路已落地 |
 | P5 | WebSocket 心跳循环与锁屏框架 | 完成 | 30 秒心跳、断线重连、锁屏框架已落地 |
 | P6 | 签到与检查流程 | 完成 | API + 学生端 + 前端全链路已实现，待实机联调 |
+| P7 | 硬件快照、日志中心、进程守护与锁屏完善 | 完成 | 3 张新表、7 个 API、2 个学生端模块、2 个前端页面、锁屏守护完善 |
 
 ## 三、本轮 Windows 联调确认结果
 
@@ -134,6 +135,9 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `0006_create_attendance_records.sql`
 - `0007_create_inspection_records.sql`
 - `0008_create_photos.sql`
+- `0009_create_hardware_snapshots.sql`
+- `0010_create_hardware_changes.sql`
+- `0011_create_process_guard_policies.sql`
 
 ### 2. 教师端服务
 
@@ -151,6 +155,13 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `GET /api/alerts`：告警列表
 - `POST /api/photos/upload`：图片上传（multipart）
 - `GET /api/photos/:id`：图片下载预览
+- `POST /api/hardware/snapshot`：硬件快照提交
+- `GET /api/hardware/snapshot`：设备硬件快照查询
+- `GET /api/hardware/changes`：硬件变更记录列表
+- `GET /api/logs`：操作日志查询（分页、类型筛选）
+- `POST /api/policies/process-guard`：创建进程守护策略
+- `GET /api/policies/process-guard`：查询进程守护策略列表
+- `DELETE /api/policies/process-guard/:id`：删除进程守护策略
 - `/ws`：WebSocket 实时通信入口
 - 自动创建 SQLite 数据库文件
 - 启动时自动执行数据库迁移
@@ -167,10 +178,12 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - 启动时自动签到
 - 检查提交与异常报告（卫生检查、设备检查）
 - 学生登录与登录状态持久化
+- 硬件信息采集与上报（CPU、内存、磁盘、网卡、OS）
+- 进程守护策略同步与进程扫描告警
 
 辅助进程：
-- `campus-guard`：守护进程框架
-- `campus-lock`：锁屏进程框架
+- `campus-guard`：双进程守护（监控 agent-core 与 campus-lock），异常退出自动拉起
+- `campus-lock`：全屏锁定 + 超级密码解锁（失败计数限流）
 
 ### 4. 教师端 Web
 
@@ -179,8 +192,10 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `/dashboard`：仪表盘
 - `/devices`：设备列表与模式切换弹窗
 - `/monitor`：监控总览
-- `/attendance`：签到管理（记录列表、统计、补签）
+- `/attendance`：签到管理（记录列表、统计卡片、补签）
 - `/alerts`：检查告警（检查记录、告警处理、图片上传与预览）
+- `/hardware`：硬件快照（设备硬件详情 + 变更记录表）
+- `/logs`：日志中心（分页查询 + 类型筛选）
 
 ## 六、Windows 发布包状态
 
@@ -214,31 +229,63 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 .\start.bat
 ```
 
-## 七、待完善功能
+## 七、P7 变更记录
 
-### P6 联调验证（待实机测试）
+### P7 教师端新增（7 个 API 路由）
+
+| 路由 | 方法 | 说明 |
+|------|------|------|
+| `/api/hardware/snapshot` | POST | 提交硬件快照（含变更检测） |
+| `/api/hardware/snapshot` | GET | 查询设备最新硬件快照 |
+| `/api/hardware/changes` | GET | 硬件变更记录列表 |
+| `/api/logs` | GET | 日志查询（分页+类型/设备筛选） |
+| `/api/policies/process-guard` | POST | 创建进程守护策略 |
+| `/api/policies/process-guard` | GET | 查询进程守护策略列表 |
+| `/api/policies/process-guard/:id` | DELETE | 删除进程守护策略 |
+
+### P7 数据库迁移（3 张新表）
+
+- `0009_create_hardware_snapshots.sql`：硬件快照（CPU、内存、磁盘、网卡、GPU、OS）
+- `0010_create_hardware_changes.sql`：硬件变更检测记录
+- `0011_create_process_guard_policies.sql`：进程守护策略（支持全局/设备绑定）
+
+### P7 学生端新增模块
+
+- `agent-core/src/hardware.rs`：sysinfo 采集 + 启动时自动上报
+- `agent-core/src/process_guard.rs`：策略同步 + 进程列表扫描 + 告警生成
+- `campus-lock/src/locker.rs`：锁屏密码验证 + 失败计数限流
+- `campus-guard`：增强为双进程守护（agent-core + campus-lock），异常退出计数上限 10
+
+### P7 前端新增
+
+- `src/views/Hardware.vue`：硬件快照详情 + 变更记录表
+- `src/views/Logs.vue`：日志分页列表 + 类型/设备筛选
+- `src/api/hardware.ts`、`src/api/logs.ts`：API 封装
+- 侧边栏新增 2 个菜单项
+
+### P7 Bug 修复
+
+- **Layout.vue 导航失效**：`el-menu` 的 `router` 模式与 `default-active` 存在竞态，改用 `router-link` + `custom` v-slot 实现侧边栏
+- **Attendance.vue 渲染错误**：后端统计 API 返回对象但 `el-table :data` 期望数组，改为卡片布局展示统计数据
+- **签到数据字段对齐**：前端 `AttendanceRecord` 字段名对齐后端 snake_case（`check_in_time`/`check_out_time`/`status`）
+
+## 八、待完善功能
+
+### P6-P7 联调验证（待实机测试）
 
 - [ ] Windows 端到端签到流程验证
 - [ ] Windows 端到端检查报告验证
 - [ ] Windows 端到端告警处理与图片上传验证
+- [ ] Windows 端到端硬件快照上报验证
+- [ ] Windows 端到端进程守护与锁屏验证
 - [ ] 签到记录导出（CSV/Excel）
 - [ ] 图片压缩功能
 
-### P7 阶段：硬件快照与审计能力
+### 后续阶段
 
-- [ ] 硬件快照采集（CPU、内存、磁盘、网卡）
-- [ ] 硬件变更检测与告警
-- [ ] 日志中心完善（查询、筛选、导出）
-- [ ] 自定义进程守护策略
-- [ ] 操作审计与异常追溯
+- [ ] P8：部署与安全加固（Windows Service 注册、安装器打包、生产部署说明）
 
-### P8 阶段：部署与安全加固
-
-- [ ] Windows Service 注册
-- [ ] 安装器打包
-- [ ] 生产部署说明
-
-## 八、开发规范执行情况
+## 九、开发规范执行情况
 
 - 每次阶段切换先读取 `/workspace/.monkeycode/MEMORY.md`。
 - 提交代码前等待用户明确授权。
@@ -248,6 +295,6 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 
 ---
 
-报告更新时间：2026-06-15  
-报告版本：v1.2  
-当前状态：P0-P6 开发完成，待 Windows 实机联调，P7 规划中
+报告更新时间：2026-06-18  
+报告版本：v1.3  
+当前状态：P0-P7 开发完成，P6-P7 待 Windows 实机联调

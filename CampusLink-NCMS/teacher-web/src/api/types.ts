@@ -39,40 +39,23 @@ export interface DashboardData {
   offlineDeviceCount: number
 }
 
-export interface AttendanceRecord {
-  id: string
-  device_id: string
-  student_id: string | null
-  record_type: string
-  time_type: string
-  timestamp: string
-  created_at: string
-}
-
 export interface AttendanceStatistics {
-  date: string
   total: number
   present: number
-  absent: number
   late: number
-  leave_early: number
+  absent: number
+  leave: number
+  records: AttendanceRecord[]
 }
 
-export interface CheckInRequest {
+export interface AttendanceRecord {
+  id: string
+  student_id: string | null
   device_id: string
-  student_id?: string
-  timestamp?: number
-}
-
-export interface CheckInResponse {
-  record_id: string
+  check_in_time: string
+  check_out_time: string | null
   status: string
-}
-
-export interface RetroactiveRequest {
-  device_id: string
-  record_type: string
-  timestamp: number
+  remarks: string | null
 }
 
 export interface InspectionRecord {

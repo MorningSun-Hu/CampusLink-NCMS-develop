@@ -8,37 +8,25 @@
       </div>
     </div>
 
-    <div class="filters">
-      <el-select v-model="filterRecordType" placeholder="记录类型" clearable @change="loadAttendanceList">
-        <el-option label="签到" value="check_in" />
-        <el-option label="签退" value="check_out" />
-      </el-select>
-      <el-date-picker
-        v-model="filterDate"
-        type="date"
-        placeholder="选择日期"
-        value-format="YYYY-MM-DD"
-        clearable
-        @change="loadAttendanceList"
-      />
-    </div>
-
     <el-table :data="records" v-loading="loading" border stripe>
       <el-table-column prop="device_id" label="设备ID" width="200" />
-      <el-table-column prop="record_type" label="记录类型">
+      <el-table-column prop="student_id" label="学生ID" width="120" />
+      <el-table-column prop="check_in_time" label="签到时间" width="180" />
+      <el-table-column prop="check_out_time" label="签退时间" width="180">
         <template #default="{ row }">
-          <el-tag :type="row.record_type === 'check_in' ? 'success' : 'warning'">
-            {{ row.record_type === 'check_in' ? '签到' : '签退' }}
-          </el-tag>
+          {{ row.check_out_time || '-' }}
         </template>
       </el-table-column>
-      <el-table-column prop="time_type" label="时段">
+      <el-table-column prop="status" label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="timeTypeTag(row.time_type)">{{ timeTypeLabel(row.time_type) }}</el-tag>
+          <el-tag :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="timestamp" label="时间" width="180" />
-      <el-table-column prop="created_at" label="创建时间" width="180" />
+      <el-table-column prop="remarks" label="备注">
+        <template #default="{ row }">
+          {{ row.remarks || '-' }}
+        </template>
+      </el-table-column>
     </el-table>
 
     <el-divider />
@@ -52,51 +40,59 @@
         value-format="YYYY-MM-DD"
         @change="loadStatistics"
       />
-      <el-table :data="statistics" border stripe style="margin-top: 16px">
-        <el-table-column prop="date" label="日期" />
-        <el-table-column prop="total" label="总数" />
-        <el-table-column prop="present" label="正常">
-          <template #default="{ row }">
-            <el-tag type="success">{{ row.present }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="absent" label="缺勤">
-          <template #default="{ row }">
-            <el-tag type="danger">{{ row.absent }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="late" label="迟到">
-          <template #default="{ row }">
-            <el-tag type="warning">{{ row.late }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="leave_early" label="早退">
-          <template #default="{ row }">
-            <el-tag type="info">{{ row.leave_early }}</el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-row :gutter="16" style="margin-top: 16px">
+        <el-col :span="4">
+          <el-card class="stat-card">
+            <div class="stat-label">总数</div>
+            <div class="stat-value">{{ stats.total ?? 0 }}</div>
+          </el-card>
+        </el-col>
+        <el-col :span="4">
+          <el-card class="stat-card">
+            <div class="stat-label">正常</div>
+            <div class="stat-value online">{{ stats.present ?? 0 }}</div>
+          </el-card>
+        </el-col>
+        <el-col :span="4">
+          <el-card class="stat-card">
+            <div class="stat-label">迟到</div>
+            <div class="stat-value warning">{{ stats.late ?? 0 }}</div>
+          </el-card>
+        </el-col>
+        <el-col :span="4">
+          <el-card class="stat-card">
+            <div class="stat-label">缺勤</div>
+            <div class="stat-value offline">{{ stats.absent ?? 0 }}</div>
+          </el-card>
+        </el-col>
+        <el-col :span="4">
+          <el-card class="stat-card">
+            <div class="stat-label">请假</div>
+            <div class="stat-value info">{{ stats.leave ?? 0 }}</div>
+          </el-card>
+        </el-col>
+      </el-row>
     </div>
 
-    <el-dialog v-model="showRetroactiveDialog" title="补签" width="400px">
+    <el-dialog v-model="showRetroactiveDialog" title="补签" width="400px" destroy-on-close>
       <el-form :model="retroactiveForm" label-width="80px">
+        <el-form-item label="学生ID">
+          <el-input v-model="retroactiveForm.student_id" placeholder="输入学生ID" />
+        </el-form-item>
         <el-form-item label="设备ID">
           <el-input v-model="retroactiveForm.device_id" placeholder="输入设备ID" />
         </el-form-item>
-        <el-form-item label="记录类型">
-          <el-select v-model="retroactiveForm.record_type" style="width: 100%">
-            <el-option label="签到" value="check_in" />
-            <el-option label="签退" value="check_out" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="时间">
+        <el-form-item label="签到时间">
           <el-date-picker
-            v-model="retroactiveForm.timestamp"
+            v-model="retroactiveForm.check_in_time"
             type="datetime"
-            placeholder="选择补签时间"
-            value-format="x"
+            placeholder="选择签到时间"
+            value-format="YYYY-MM-DD HH:mm:ss"
             style="width: 100%"
           />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="retroactiveForm.remarks" placeholder="备注信息" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -114,27 +110,23 @@ import { getAttendanceList, getAttendanceStatistics, retroactive } from '@/api/a
 import type { AttendanceRecord, AttendanceStatistics } from '@/api/types'
 
 const records = ref<AttendanceRecord[]>([])
-const statistics = ref<AttendanceStatistics[]>([])
+const stats = ref<Partial<AttendanceStatistics>>({})
 const loading = ref(false)
-const filterRecordType = ref('')
-const filterDate = ref('')
 const statsDate = ref('')
 
 const showRetroactiveDialog = ref(false)
 const retroactiveLoading = ref(false)
 const retroactiveForm = ref({
+  student_id: '',
   device_id: '',
-  record_type: 'check_in',
-  timestamp: '',
+  check_in_time: '',
+  remarks: '',
 })
 
 async function loadAttendanceList() {
   loading.value = true
   try {
-    const params: Record<string, string> = {}
-    if (filterRecordType.value) params.record_type = filterRecordType.value
-    if (filterDate.value) params.date = filterDate.value
-    const res = await getAttendanceList(params)
+    const res = await getAttendanceList()
     if (res.code === 0 && res.data) {
       records.value = res.data
     }
@@ -149,7 +141,7 @@ async function loadStatistics() {
   try {
     const res = await getAttendanceStatistics(statsDate.value || undefined)
     if (res.code === 0 && res.data) {
-      statistics.value = res.data
+      stats.value = res.data
     }
   } catch (e: any) {
     ElMessage.error('获取统计失败: ' + (e?.message || '未知错误'))
@@ -157,20 +149,25 @@ async function loadStatistics() {
 }
 
 async function doRetroactive() {
+  if (!retroactiveForm.value.student_id) {
+    ElMessage.warning('请输入学生ID')
+    return
+  }
   if (!retroactiveForm.value.device_id) {
     ElMessage.warning('请输入设备ID')
     return
   }
-  if (!retroactiveForm.value.timestamp) {
+  if (!retroactiveForm.value.check_in_time) {
     ElMessage.warning('请选择时间')
     return
   }
   retroactiveLoading.value = true
   try {
     const res = await retroactive({
+      student_id: retroactiveForm.value.student_id,
       device_id: retroactiveForm.value.device_id,
-      record_type: retroactiveForm.value.record_type,
-      timestamp: Number(retroactiveForm.value.timestamp) / 1000,
+      check_in_time: retroactiveForm.value.check_in_time,
+      remarks: retroactiveForm.value.remarks || undefined,
     })
     if (res.code === 0) {
       ElMessage.success('补签成功')
@@ -191,22 +188,24 @@ function loadData() {
   loadStatistics()
 }
 
-function timeTypeTag(type: string) {
+function statusTagType(status: string) {
   const map: Record<string, string> = {
-    on_time: 'success',
+    present: 'success',
     late: 'warning',
-    leave_early: 'info',
+    absent: 'danger',
+    leave: 'info',
   }
-  return map[type] || 'info'
+  return map[status] || 'info'
 }
 
-function timeTypeLabel(type: string) {
+function statusLabel(status: string) {
   const map: Record<string, string> = {
-    on_time: '准时',
+    present: '正常',
     late: '迟到',
-    leave_early: '早退',
+    absent: '缺勤',
+    leave: '请假',
   }
-  return map[type] || type
+  return map[status] || status
 }
 
 onMounted(() => {
@@ -238,17 +237,44 @@ onMounted(() => {
   gap: 8px;
 }
 
-.filters {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
 .statistics {
   margin-top: 16px;
 }
 
 .statistics h3 {
   margin-bottom: 12px;
+}
+
+.stat-card {
+  text-align: center;
+  padding: 12px;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: bold;
+  color: #333;
+}
+
+.stat-value.online {
+  color: #67c23a;
+}
+
+.stat-value.offline {
+  color: #f56c6c;
+}
+
+.stat-value.warning {
+  color: #e6a23c;
+}
+
+.stat-value.info {
+  color: #909399;
 }
 </style>
