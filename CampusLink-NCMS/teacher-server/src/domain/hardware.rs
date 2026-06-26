@@ -166,6 +166,17 @@ async fn detect_changes(pool: &SqlitePool, device_id: &str, prev: &HardwareSnaps
             .bind(new_val.as_deref())
             .execute(pool)
             .await?;
+
+            let log_id = Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"INSERT INTO operation_logs (id, log_type, device_id, action, detail, created_at)
+                   VALUES (?, 'alert', ?, 'hardware_change', ?, datetime('now'))"#
+            )
+            .bind(&log_id)
+            .bind(device_id)
+            .bind(format!("{}: '{}' -> '{}'", field_name, old_str, new_str))
+            .execute(pool)
+            .await?;
         }
     }
 

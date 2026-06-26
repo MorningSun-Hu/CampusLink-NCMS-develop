@@ -32,3 +32,15 @@ export async function queryLogs(params?: {
   const resp = await api.get('/logs', { params })
   return resp.data
 }
+
+export function exportLogsUrl(params?: {
+  log_type?: string
+  device_id?: string
+  date_from?: string
+}) {
+  const searchParams = new URLSearchParams()
+  if (params?.log_type) searchParams.set('log_type', params.log_type)
+  if (params?.device_id) searchParams.set('device_id', params.device_id)
+  if (params?.date_from) searchParams.set('date_from', params.date_from)
+  return `/api/logs/export?${searchParams.toString()}`
+}

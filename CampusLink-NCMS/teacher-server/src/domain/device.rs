@@ -24,6 +24,7 @@ pub struct DeviceRow {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceResponse {
     pub id: String,
     pub device_code: String,
@@ -76,7 +77,7 @@ pub async fn register_device(pool: &SqlitePool, device_code: &str, machine_finge
         INSERT INTO student_devices 
         (id, device_code, device_name, machine_fingerprint, hostname, ip_address, mac_address, 
          register_status, online_status, current_mode, agent_version, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'offline', 'open', ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'verified', 'offline', 'open', ?, datetime('now'), datetime('now'))
         ON CONFLICT(device_code) DO UPDATE SET
             last_seen_at = datetime('now'),
             updated_at = datetime('now')
@@ -113,6 +114,18 @@ pub async fn update_heartbeat(pool: &SqlitePool, device_id: &str) -> Result<()> 
     sqlx::query(
         "UPDATE student_devices SET last_seen_at = datetime('now'), online_status = 'online', updated_at = datetime('now') WHERE id = ?"
     )
+    .bind(device_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn update_device_mode(pool: &SqlitePool, device_id: &str, mode: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    .bind(mode)
     .bind(device_id)
     .execute(pool)
     .await?;

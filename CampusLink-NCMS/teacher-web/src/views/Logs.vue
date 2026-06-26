@@ -2,7 +2,10 @@
   <div class="logs-page">
     <div class="header">
       <h2 class="page-title">日志中心</h2>
-      <el-button @click="loadLogs">刷新</el-button>
+      <div class="header-actions">
+        <el-button type="primary" @click="exportLogs">导出 CSV</el-button>
+        <el-button @click="loadLogs">刷新</el-button>
+      </div>
     </div>
 
     <div class="filters">
@@ -48,7 +51,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { queryLogs } from '@/api/logs'
+import { queryLogs, exportLogsUrl } from '@/api/logs'
 import type { LogEntry } from '@/api/logs'
 
 const logs = ref<LogEntry[]>([])
@@ -91,6 +94,13 @@ function logTypeLabel(type: string | null) {
   return map[type || ''] || type || '-'
 }
 
+function exportLogs() {
+  const params: Record<string, string> = {}
+  if (logType.value) params.log_type = logType.value
+  if (deviceId.value) params.device_id = deviceId.value
+  window.open(exportLogsUrl(params), '_blank')
+}
+
 onMounted(() => {
   loadLogs()
 })
@@ -121,5 +131,10 @@ onMounted(() => {
   align-items: center;
   margin-bottom: 16px;
   flex-wrap: wrap;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>

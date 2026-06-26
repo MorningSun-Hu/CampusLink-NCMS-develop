@@ -21,7 +21,8 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 | P4 | 模式切换基础链路 | 完成 | REST API 与 WebSocket 广播链路已落地 |
 | P5 | WebSocket 心跳循环与锁屏框架 | 完成 | 30 秒心跳、断线重连、锁屏框架已落地 |
 | P6 | 签到与检查流程 | 完成 | API + 学生端 + 前端全链路已实现，待实机联调 |
-| P7 | 硬件快照、日志中心、进程守护与锁屏完善 | 完成 | 3 张新表、7 个 API、2 个学生端模块、2 个前端页面、锁屏守护完善 |
+| P7 | 硬件快照、日志中心、进程守护与锁屏完善 | 完成 | 3 张新表、7 个 API、2 个学生端模块、2 个前端页面、锁屏全链路实现与联调修复 |
+| P8 | 部署与安全加固 | 待开始 | Windows 服务注册、安装器打包、域名/HTTPS、生产部署说明 |
 
 ## 三、本轮 Windows 联调确认结果
 
@@ -143,9 +144,12 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 
 接口与能力：
 - `GET /api/health`：健康检查
+- `GET /api/dashboard/overview`：仪表盘统计概览
 - `POST /api/devices/register`：设备注册
 - `POST /api/devices`：设备列表查询
 - `POST /api/devices/:id/mode`：模式切换
+- `POST /api/devices/:id/lock`：远程锁屏（WebSocket 广播 lock_screen 命令）
+- `POST /api/devices/:id/unlock`：远程解锁（WebSocket 广播 unlock 命令，taskkill）
 - `POST /api/attendance/check-in`：学生签到
 - `POST /api/attendance/retroactive`：教师补签
 - `GET /api/attendance`：签到记录列表
@@ -154,6 +158,7 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `POST /api/alerts/:id/resolve`：处理告警
 - `GET /api/alerts`：告警列表
 - `POST /api/photos/upload`：图片上传（multipart）
+- `GET /api/photos`：图片列表（可选 `inspection_id` 筛选）
 - `GET /api/photos/:id`：图片下载预览
 - `POST /api/hardware/snapshot`：硬件快照提交
 - `GET /api/hardware/snapshot`：设备硬件快照查询
@@ -166,6 +171,7 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - 自动创建 SQLite 数据库文件
 - 启动时自动执行数据库迁移
 - 接收学生端心跳并返回 `heartbeat_ack`
+- 内嵌前端静态文件（SPA fallback，端口 8080 一体化部署）
 
 ### 3. 学生端 Agent
 
@@ -178,8 +184,10 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - 启动时自动签到
 - 检查提交与异常报告（卫生检查、设备检查）
 - 学生登录与登录状态持久化
-- 硬件信息采集与上报（CPU、内存、磁盘、网卡、OS）
+- 硬件信息采集与上报（CPU、内存、磁盘、网卡、OS、GPU）
 - 进程守护策略同步与进程扫描告警
+- 模式切换联动锁屏（locked/exam 模式自动启动 campus-lock，open 模式自动杀进程）
+- 锁屏进程退出实时检测与状态上报（mpsc channel → 心跳循环 → WebSocket 通知教师端）
 
 辅助进程：
 - `campus-guard`：双进程守护（监控 agent-core 与 campus-lock），异常退出自动拉起
@@ -263,27 +271,87 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 - `src/api/hardware.ts`、`src/api/logs.ts`：API 封装
 - 侧边栏新增 2 个菜单项
 
+### P7 锁屏全链路（补充）
+
+#### 触发链路
+
+```
+教师端 Web [锁屏按钮] 或 [切换模式→锁定]
+  → POST /api/devices/:id/mode  (mode="locked"/"exam")
+  → 教师端 WebSocket 广播 {"type":"mode_switch","mode":"locked",...}
+  → 学生端 command_handler 接收 → mode.rs lock_completely()
+  → spawn campus-lock.exe (全屏 egui GUI)
+  → campus-lock 输入超级密码解锁 / 教师端远程 taskkill
+```
+
+#### 教师端新增
+
+- `src/api/handlers.rs`：`lock_screen_handler` + `unlock_handler`（广播 `lock_screen`/`unlock` 命令）
+- `src/api/mod.rs`：路由注册 `POST /api/devices/:id/lock`、`POST /api/devices/:id/unlock`
+- `src/domain/device.rs`：新增 `update_device_mode()` 轻量更新函数
+- WebSocket 收到心跳时同步更新 `current_mode` 到数据库
+
+#### 学生端新增/修改
+
+- `agent-core/src/mode.rs`：`lock_completely()` / `enable_exam_mode()` 实际 spawn campus-lock.exe；`disable_all_locks()` 调用 taskkill 结束锁屏进程
+- `agent-core/src/mode.rs`：spawn 后启动 `spawn_blocking` 监控进程退出，退出时通过 `mpsc::UnboundedSender` 通知心跳循环
+- `agent-core/src/command_handler.rs`：持有 `unlock_tx` 传递给 mode handler；LockScreen/Unlock 枚举处理；使用 `current_exe().parent()` 定位 campus-lock.exe
+- `agent-core/src/websocket.rs`：心跳循环收到解锁通知后立即更新 mode→"open"、保存 config、发送心跳上报教师端；收到命令后同步 command_handler 配置到心跳循环
+- `agent-core/src/config.rs`：新增 `lock_password`/`is_locked`/`lock_pid` 字段
+
+#### campus-lock 修复
+
+- `campus-lock/src/main.rs`：移除 `ctx.request_repaint()` 持续重绘（修复 TextEdit 输入光标异常）
+- `campus-lock/src/main.rs`：启动时 `ImmDisableIME(GetCurrentThreadId())` 禁用 Windows IME（修复输入法拦截键击导致字符重复/异常）
+- `campus-lock/src/main.rs`：修复 Enter 键解锁逻辑，添加 stderr 错误日志输出
+- `campus-lock/Cargo.toml`：新增 `Win32_UI_Input_Ime`、`Win32_System_Threading` features
+
+#### 教师端 Web 新增
+
+- `src/api/devices.ts`：`lockDevice()` / `unlockDevice()` API 封装
+- `src/views/Devices.vue`：操作列新增锁屏/解锁按钮
+
 ### P7 Bug 修复
 
 - **Layout.vue 导航失效**：`el-menu` 的 `router` 模式与 `default-active` 存在竞态，改用 `router-link` + `custom` v-slot 实现侧边栏
 - **Attendance.vue 渲染错误**：后端统计 API 返回对象但 `el-table :data` 期望数组，改为卡片布局展示统计数据
 - **签到数据字段对齐**：前端 `AttendanceRecord` 字段名对齐后端 snake_case（`check_in_time`/`check_out_time`/`status`）
+- **仪表盘全为 0**：后端缺少 `/api/dashboard/overview` 端点，新增 `dashboard_handlers.rs` 实现统计查询
+- **设备信息字段为空**：后端 `DeviceResponse` 序列化为 snake_case，前端期望 camelCase，添加 `#[serde(rename_all = "camelCase")]`
+- **模式切换学生端无反应**：WebSocket 消息字段不匹配（后端 `target_mode` vs 前端/学生端 `mode`），统一为 `{"type":"mode_switch","device_id":"...","mode":"...","operator":"...","timestamp":...}`
+- **学生端接收全部设备命令**：命令广播未按 `device_id` 过滤，学生端 `command_handler.rs` 增加 ID 比对逻辑
+- **设备注册状态始终 pending**：注册时设为 `pending` 但无审核流程，改为直接 `verified`
+- **图片列表 400 错误**：`inspection_id` 原为必填参数但前端未传，改为可选参数，不传时返回最近 50 张
+- **教师端独立前端服务**：原需额外启动 `vite` 开发服务器，现教师端内嵌 `static/` 目录并通过 SPA fallback 一体化部署（端口 8080）
 
-## 八、待完善功能
+## 八、P8 计划：部署与安全加固
 
-### P6-P7 联调验证（待实机测试）
+### P8 任务清单
 
-- [ ] Windows 端到端签到流程验证
+| 任务 | 优先级 | 说明 |
+|------|--------|------|
+| 教师端 Windows Service 注册 | 高 | 使用 `sc create` 或 `nssm` 将 teacher-server 注册为系统服务，开机自启 |
+| 学生端开机自启 | 高 | 注册 `agent-core.exe` + `campus-guard.exe` 为计划任务或服务 |
+| 安装器打包（NSIS/Inno Setup） | 高 | 一键安装脚本，含 MSVC 运行时检测、防火墙放行、目录结构创建 |
+| 防火墙自动放行 | 中 | 安装器自动添加 Windows 防火墙入站规则（8080 端口） |
+| SQLite 数据库备份与恢复策略 | 中 | 定期备份、首次启动数据目录初始化 |
+| 日志轮转与清理 | 中 | 教师端/学生端日志按天轮转、过期自动清理 |
+| API Token 认证 | 中 | 设备注册/API 调用使用预置 Token 验签 |
+| HTTPS 支持 | 低 | 可选自签名证书或 let's encrypt |
+| 生产部署说明文档 | 高 | 教室实际部署拓扑、网络要求、启动顺序、故障排查 |
+
+### P6-P7 联调验证
+
+- [x] Windows 端到端签到流程验证
 - [ ] Windows 端到端检查报告验证
 - [ ] Windows 端到端告警处理与图片上传验证
-- [ ] Windows 端到端硬件快照上报验证
-- [ ] Windows 端到端进程守护与锁屏验证
+- [x] Windows 端到端硬件快照上报验证
+- [x] Windows 端到端进程守护与锁屏验证（模式切换→campus-lock spawn→密码解锁→教师端状态同步）
+- [x] 仪表盘统计准确性验证
+- [x] 模式切换端到端验证（含锁屏联动）
 - [ ] 签到记录导出（CSV/Excel）
 - [ ] 图片压缩功能
-
-### 后续阶段
-
-- [ ] P8：部署与安全加固（Windows Service 注册、安装器打包、生产部署说明）
+- [x] 教师端实时感知学生端解锁状态
 
 ## 九、开发规范执行情况
 
@@ -295,6 +363,6 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 
 ---
 
-报告更新时间：2026-06-18  
-报告版本：v1.3  
-当前状态：P0-P7 开发完成，P6-P7 待 Windows 实机联调
+报告更新时间：2026-06-21  
+报告版本：v1.5  
+当前状态：P0-P7 开发与联调修复完成（含锁屏全链路 + campus-lock IME 修复），P8 部署与安全加固待开始

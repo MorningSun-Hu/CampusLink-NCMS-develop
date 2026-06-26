@@ -56,6 +56,10 @@ pub fn check_and_restart(policies: &[ProcessGuardPolicy]) -> Vec<ProcessAlert> {
     system.refresh_all();
 
     for policy in policies {
+        if !policy.enabled {
+            continue;
+        }
+
         let found = system
             .processes()
             .values()
@@ -63,19 +67,60 @@ pub fn check_and_restart(policies: &[ProcessGuardPolicy]) -> Vec<ProcessAlert> {
 
         if !found {
             info!(
-                "Process '{}' not running, check interval={}s",
-                policy.process_name, policy.check_interval_seconds
+                "Process '{}' not running, attempting restart",
+                policy.process_name
             );
-            alerts.push(ProcessAlert {
-                policy_id: policy.id.clone(),
-                process_name: policy.process_name.clone(),
-                alert_type: "process_missing".to_string(),
-                message: format!("守护进程 {} 未运行", policy.process_name),
-            });
+
+            match std::process::Command::new(&policy.process_name).spawn() {
+                Ok(child) => {
+                    info!("Process '{}' restarted with PID {}", policy.process_name, child.id());
+                }
+                Err(e) => {
+                    warn!("Failed to restart process '{}': {}", policy.process_name, e);
+                    alerts.push(ProcessAlert {
+                        policy_id: policy.id.clone(),
+                        process_name: policy.process_name.clone(),
+                        alert_type: "process_restart_failed".to_string(),
+                        message: format!("进程 {} 重启失败: {}", policy.process_name, e),
+                    });
+                }
+            }
         }
     }
 
     alerts
+}
+
+pub async fn report_alerts(config: &Config, alerts: &[ProcessAlert]) {
+    if alerts.is_empty() {
+        return;
+    }
+
+    let client = reqwest::Client::new();
+
+    for alert in alerts {
+        let url = format!("{}/api/inspection/submit", config.teacher_server_url);
+        let body = serde_json::json!({
+            "device_id": config.device_id.clone().unwrap_or_default(),
+            "inspection_type": "process_guard",
+            "item_name": alert.process_name,
+            "status": "abnormal",
+            "description": alert.message,
+        });
+
+        match client.post(&url).json(&body).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    info!("Alert reported: {}", alert.message);
+                } else {
+                    warn!("Failed to report alert, HTTP {}", resp.status());
+                }
+            }
+            Err(e) => {
+                warn!("Failed to send alert report: {}", e);
+            }
+        }
+    }
 }
 
 #[derive(Debug)]

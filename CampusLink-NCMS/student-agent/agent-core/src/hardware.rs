@@ -62,7 +62,7 @@ pub fn collect() -> Result<HardwareSnapshot> {
         .collect();
     let mac_addresses = serde_json::to_string(&mac_addresses).unwrap_or_default();
 
-    let gpu_info = "[]".to_string();
+    let gpu_info = detect_gpus();
 
     let os_version = format!("{} {}", sysinfo::System::name().unwrap_or_default(), sysinfo::System::os_version().unwrap_or_default());
 
@@ -80,6 +80,61 @@ pub fn collect() -> Result<HardwareSnapshot> {
         os_version,
         hostname,
     })
+}
+
+fn detect_gpus() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        match std::process::Command::new("wmic")
+            .args(["path", "win32_videocontroller", "get", "name"])
+            .output()
+        {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let gpus: Vec<GpuInfo> = text
+                    .lines()
+                    .skip(1)
+                    .filter_map(|line| {
+                        let name = line.trim().to_string();
+                        if name.is_empty() || name.eq_ignore_ascii_case("Name") {
+                            None
+                        } else {
+                            Some(GpuInfo { name })
+                        }
+                    })
+                    .collect();
+                serde_json::to_string(&gpus).unwrap_or_else(|_| "[]".to_string())
+            }
+            Err(_) => "[]".to_string(),
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match std::process::Command::new("sh")
+            .arg("-c")
+            .arg("lspci | grep -i vga || true")
+            .output()
+        {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let gpus: Vec<GpuInfo> = text
+                    .lines()
+                    .filter_map(|line| {
+                        let line = line.trim();
+                        if line.is_empty() { None } else {
+                            Some(GpuInfo { name: line.to_string() })
+                        }
+                    })
+                    .collect();
+                serde_json::to_string(&gpus).unwrap_or_else(|_| "[]".to_string())
+            }
+            Err(_) => "[]".to_string(),
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        "[]".to_string()
+    }
 }
 
 pub async fn submit(config: &Config) -> Result<()> {

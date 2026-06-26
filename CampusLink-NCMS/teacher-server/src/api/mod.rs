@@ -5,18 +5,22 @@ mod photo_handlers;
 mod hardware_handlers;
 mod log_handlers;
 mod process_guard_handlers;
+mod dashboard_handlers;
 
 use axum::{routing::{get, post, delete}, Router};
+use axum::response::Html;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
+use tower_http::services::ServeDir;
 
-use handlers::{register_device_handler, list_devices_handler, mode_switch_handler, ws_handler, AppState};
+use handlers::{register_device_handler, list_devices_handler, mode_switch_handler, ws_handler, lock_screen_handler, unlock_handler, AppState};
 use attendance_handlers::{check_in_handler, statistics_handler, retroactive_handler, list_attendance_handler};
 use inspection_handlers::{submit_inspection_handler, list_inspections_handler, list_alerts_handler, resolve_alert_handler};
 use photo_handlers::{upload_photo_handler, get_photo_handler, list_photos_handler};
 use hardware_handlers::{submit_snapshot_handler, get_snapshot_handler, list_changes_handler};
-use log_handlers::query_logs_handler;
+use log_handlers::{query_logs_handler, export_logs_handler};
 use process_guard_handlers::{create_policy_handler, update_policy_handler, list_policies_handler, delete_policy_handler};
+use dashboard_handlers::dashboard_overview_handler;
 
 pub async fn create_app(pool: &SqlitePool) -> Router {
     let (ws_tx, _) = broadcast::channel(100);
@@ -31,6 +35,8 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
         .route("/api/devices/register", post(register_device_handler))
         .route("/api/devices", post(list_devices_handler))
         .route("/api/devices/:id/mode", post(mode_switch_handler))
+        .route("/api/devices/:id/lock", post(lock_screen_handler))
+        .route("/api/devices/:id/unlock", post(unlock_handler))
         .route("/ws", get(ws_handler))
         .route("/api/attendance/check-in", post(check_in_handler))
         .route("/api/attendance/statistics", get(statistics_handler))
@@ -47,12 +53,23 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
         .route("/api/hardware/snapshot", get(get_snapshot_handler))
         .route("/api/hardware/changes", get(list_changes_handler))
         .route("/api/logs", get(query_logs_handler))
+        .route("/api/logs/export", get(export_logs_handler))
         .route("/api/policies/process-guard", post(create_policy_handler))
         .route("/api/policies/process-guard/:id", post(update_policy_handler))
         .route("/api/policies/process-guard", get(list_policies_handler))
-        .route("/api/policies/process-guard/:id", delete(delete_policy_handler));
+        .route("/api/policies/process-guard/:id", delete(delete_policy_handler))
+        .route("/api/dashboard/overview", get(dashboard_overview_handler))
+        .nest_service("/assets", ServeDir::new("static/assets"))
+        .fallback(serve_spa_index);
 
     app.with_state(state)
+}
+
+async fn serve_spa_index() -> Html<String> {
+    match tokio::fs::read_to_string("static/index.html").await {
+        Ok(html) => Html(html),
+        Err(_) => Html("<h1>Frontend not found</h1><p>Place built frontend in static/ directory</p>".into()),
+    }
 }
 
 async fn health_handler() -> &'static str {

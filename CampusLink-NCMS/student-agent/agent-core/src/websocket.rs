@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn, error, debug};
 
 use crate::config::Config;
 use crate::command_handler::{CommandHandler, HeartbeatRequest};
+use crate::process_guard;
 
 /// WebSocket 客户端
 pub struct WebSocketClient {
@@ -162,17 +164,24 @@ pub struct HeartbeatLoop {
     client: WebSocketClient,
     heartbeat_interval: std::time::Duration,
     command_handler: CommandHandler,
+    config: Config,
+    process_guard_interval: std::time::Duration,
+    unlock_rx: mpsc::UnboundedReceiver<String>,
 }
 
 impl HeartbeatLoop {
     pub fn new(config: Config) -> Self {
         let client = WebSocketClient::new(config.clone());
-        let command_handler = CommandHandler::new(config.clone());
+        let (unlock_tx, unlock_rx) = mpsc::unbounded_channel();
+        let command_handler = CommandHandler::new(config.clone(), Some(unlock_tx));
         
         Self {
             client,
             heartbeat_interval: std::time::Duration::from_secs(30),
             command_handler,
+            config,
+            process_guard_interval: std::time::Duration::from_secs(60),
+            unlock_rx,
         }
     }
 
@@ -187,6 +196,7 @@ impl HeartbeatLoop {
         }
 
         let mut heartbeat_interval = tokio::time::interval(self.heartbeat_interval);
+        let mut process_guard_tick = tokio::time::interval(self.process_guard_interval);
         
         loop {
             tokio::select! {
@@ -196,18 +206,45 @@ impl HeartbeatLoop {
                         warn!("Failed to send heartbeat: {}", e);
                     }
                 }
+
+                // 定时检查进程守护
+                _ = process_guard_tick.tick() => {
+                    let policies = process_guard::sync_policies(&self.config).await;
+                    let alerts = process_guard::check_and_restart(&policies);
+                    process_guard::report_alerts(&self.config, &alerts).await;
+                }
+
+                // 接收解锁通知（campus-lock 进程退出）
+                unlock_msg = self.unlock_rx.recv() => {
+                    if let Some(msg) = unlock_msg {
+                        info!("Unlock notification received: {}", msg);
+                        self.config.current_mode = "open".to_string();
+                        self.config.is_locked = false;
+                        self.config.lock_pid = None;
+                        if let Err(e) = self.config.save() {
+                            error!("Failed to save config after unlock: {}", e);
+                        }
+                        // 立即上报解锁状态到教师端
+                        if let Err(e) = self.client.send_heartbeat().await {
+                            warn!("Failed to send unlock status update: {}", e);
+                        }
+                        println!("\n[SCREEN UNLOCKED] Device returned to open mode\n");
+                    }
+                }
                 
                 // 接收消息
                 msg = self.client.receive_message() => {
                     match msg {
                         Ok(Some(text)) => {
-                            // 处理收到的命令
                             if let Err(e) = self.command_handler.handle_command(&text).await {
                                 error!("Failed to handle command: {}", e);
                             }
+                            // 同步 command_handler 的 Config 状态回心跳循环
+                            self.config.current_mode = self.command_handler.config.current_mode.clone();
+                            self.config.is_locked = self.command_handler.config.is_locked;
+                            self.config.lock_pid = self.command_handler.config.lock_pid;
                         }
                         Ok(None) => {
-                            // 无消息或连接断开
                             if self.client.should_reconnect() {
                                 self.client.increment_reconnect_attempts();
                                 let delay = self.client.get_reconnect_delay();

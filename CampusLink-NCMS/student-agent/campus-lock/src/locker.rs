@@ -1,35 +1,52 @@
 use anyhow::Result;
-use std::io::{self, Write};
 use tracing::{info, warn};
 
-pub async fn run(super_password: &str) -> Result<()> {
-    let mut attempts = 0;
-    let max_attempts = 5;
+pub struct Locker {
+    super_password: String,
+    attempts: u32,
+    max_attempts: u32,
+}
 
-    loop {
-        print!("Password: ");
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let input = input.trim().to_string();
-
-        if input == super_password {
-            println!("\nAccess granted. Screen unlocked.");
-            return Ok(());
-        }
-
-        attempts += 1;
-        warn!("Incorrect password attempt {}/{}", attempts, max_attempts);
-
-        if attempts >= max_attempts {
-            println!("\nToo many failed attempts. System will remain locked.");
-            println!("Contact administrator for assistance.");
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-            attempts = 0;
-        } else {
-            println!("Incorrect password. {} attempts remaining.\n", max_attempts - attempts);
+impl Locker {
+    pub fn new(super_password: &str) -> Self {
+        Self {
+            super_password: super_password.to_string(),
+            attempts: 0,
+            max_attempts: 5,
         }
     }
+
+    pub fn try_unlock(&mut self, input: &str) -> UnlockResult {
+        if input == self.super_password {
+            info!("Screen unlocked successfully - audit: valid password entered");
+            UnlockResult::Success
+        } else {
+            self.attempts += 1;
+            warn!(
+                "Failed unlock attempt {}/{}",
+                self.attempts, self.max_attempts
+            );
+            if self.attempts >= self.max_attempts {
+                info!("Lock cooldown activated - {} failed attempts", self.attempts);
+                UnlockResult::Cooldown {
+                    remaining_seconds: 30,
+                }
+            } else {
+                UnlockResult::Failure {
+                    attempts: self.attempts,
+                    max_attempts: self.max_attempts,
+                }
+            }
+        }
+    }
+
+    pub fn reset_attempts(&mut self) {
+        self.attempts = 0;
+    }
+}
+
+pub enum UnlockResult {
+    Success,
+    Failure { attempts: u32, max_attempts: u32 },
+    Cooldown { remaining_seconds: u64 },
 }

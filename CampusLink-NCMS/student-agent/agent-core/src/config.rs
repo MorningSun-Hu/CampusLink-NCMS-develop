@@ -12,6 +12,11 @@ pub struct Config {
     pub student_name: Option<String>,
     pub auth_token: Option<String>,
     pub token_expires_at: Option<String>,
+    pub lock_password: Option<String>,
+    #[serde(skip)]
+    pub is_locked: bool,
+    #[serde(skip)]
+    pub lock_pid: Option<u32>,
 }
 
 impl Config {
@@ -27,6 +32,9 @@ impl Config {
             student_name: None,
             auth_token: None,
             token_expires_at: None,
+            lock_password: Some("admin123".to_string()),
+            is_locked: false,
+            lock_pid: None,
         }
     }
 

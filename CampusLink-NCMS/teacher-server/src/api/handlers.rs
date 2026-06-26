@@ -7,7 +7,7 @@ use futures_util::sink::SinkExt;
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tracing::{info, error};
+use tracing::{info, warn, error};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
 use crate::domain::device;
@@ -123,8 +123,9 @@ pub async fn mode_switch_handler(
 ) -> impl IntoResponse {
     match device::switch_device_mode(&state.pool, &req.device_id, &req.target_mode, &req.operator_name).await {
         Ok(command_id) => {
-            let msg = format!(r#"{{"type":"mode_switch","command_id":"{}","device_id":"{}","target_mode":"{}"}}"#, 
-                command_id, req.device_id, req.target_mode);
+            let msg = format!(r#"{{"type":"mode_switch","device_id":"{}","mode":"{}","operator":"{}","timestamp":{}}}"#, 
+                req.device_id, req.target_mode, req.operator_name,
+                chrono::Utc::now().timestamp());
             
             let _ = state.ws_tx.send(msg);
             
@@ -140,6 +141,40 @@ pub async fn mode_switch_handler(
             Json(ApiResponse::error(500, "模式切换失败".to_string()))
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LockScreenRequest {
+    pub device_id: String,
+    pub reason: Option<String>,
+}
+
+pub async fn lock_screen_handler(
+    State(state): State<AppState>,
+    Json(req): Json<LockScreenRequest>,
+) -> impl IntoResponse {
+    let reason = req.reason.unwrap_or_else(|| "Teacher locked this device".to_string());
+    let msg = format!(
+        r#"{{"type":"lock_screen","reason":"{}","timestamp":{}}}"#,
+        reason,
+        chrono::Utc::now().timestamp()
+    );
+    let _ = state.ws_tx.send(msg);
+    info!("Lock screen command sent for device={}", req.device_id);
+    Json(ApiResponse::success(serde_json::json!({"device_id": req.device_id, "status": "lock_sent"})))
+}
+
+pub async fn unlock_handler(
+    State(state): State<AppState>,
+    Json(req): Json<LockScreenRequest>,
+) -> impl IntoResponse {
+    let msg = format!(
+        r#"{{"type":"unlock","timestamp":{}}}"#,
+        chrono::Utc::now().timestamp()
+    );
+    let _ = state.ws_tx.send(msg);
+    info!("Unlock command sent for device={}", req.device_id);
+    Json(ApiResponse::success(serde_json::json!({"device_id": req.device_id, "status": "unlock_sent"})))
 }
 
 pub async fn ws_handler(
@@ -166,6 +201,9 @@ async fn handle_socket(socket: WebSocket, pool: SqlitePool, mut rx: broadcast::R
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text) {
                             if let Some(device_id) = data["device_id"].as_str() {
                                 let _ = device::update_heartbeat(&pool, device_id).await;
+                                if let Some(mode) = data["mode"].as_str() {
+                                    let _ = device::update_device_mode(&pool, device_id, mode).await;
+                                }
                             }
                         }
                         sender.send(Message::Text(r#"{"type":"heartbeat_ack","ack_code":0,"message":"ok"}"#.to_string())).await?;

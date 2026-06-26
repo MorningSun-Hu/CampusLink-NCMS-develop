@@ -70,13 +70,21 @@ pub async fn create_photo(pool: &SqlitePool, file_path: &str, file_size: i64, mi
     })
 }
 
-pub async fn get_photos_by_inspection(pool: &SqlitePool, inspection_id: &str) -> Result<Vec<PhotoRecord>> {
-    let rows = sqlx::query_as::<_, PhotoRow>(
-        "SELECT * FROM photos WHERE inspection_id = ? ORDER BY upload_time DESC"
-    )
-    .bind(inspection_id)
-    .fetch_all(pool)
-    .await?;
+pub async fn list_photos(pool: &SqlitePool, inspection_id: Option<&str>) -> Result<Vec<PhotoRecord>> {
+    let rows = if let Some(id) = inspection_id {
+        sqlx::query_as::<_, PhotoRow>(
+            "SELECT * FROM photos WHERE inspection_id = ? ORDER BY upload_time DESC"
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, PhotoRow>(
+            "SELECT * FROM photos ORDER BY upload_time DESC LIMIT 50"
+        )
+        .fetch_all(pool)
+        .await?
+    };
 
     Ok(rows.into_iter().map(|r| PhotoRecord {
         id: r.id,

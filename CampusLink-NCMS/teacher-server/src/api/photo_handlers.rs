@@ -123,7 +123,7 @@ pub async fn list_photos_handler(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<InspectionPhotoQuery>,
 ) -> impl IntoResponse {
-    match photo::get_photos_by_inspection(&state.pool, &query.inspection_id).await {
+    match photo::list_photos(&state.pool, query.inspection_id.as_deref()).await {
         Ok(photos) => Json(ApiResponse::success(photos)),
         Err(e) => {
             error!("List photos failed: {}", e);
@@ -134,5 +134,5 @@ pub async fn list_photos_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct InspectionPhotoQuery {
-    pub inspection_id: String,
+    pub inspection_id: Option<String>,
 }
