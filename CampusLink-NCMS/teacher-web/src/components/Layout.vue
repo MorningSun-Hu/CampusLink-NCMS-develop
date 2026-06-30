@@ -39,6 +39,16 @@
               <span>日志中心</span>
             </div>
           </router-link>
+          <router-link to="/students" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>学生管理</span>
+            </div>
+          </router-link>
+          <router-link to="/settings" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>系统设置</span>
+            </div>
+          </router-link>
         </div>
       </el-aside>
       <el-container>

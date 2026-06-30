@@ -27,3 +27,5 @@ local-ip-address.workspace = true
 chrono.workspace = true
 rand.workspace = true
 sysinfo.workspace = true
+aes-gcm = "0.10"
+sha2 = "0.10"

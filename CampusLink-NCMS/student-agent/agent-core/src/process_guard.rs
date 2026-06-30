@@ -130,3 +130,58 @@ pub struct ProcessAlert {
     pub alert_type: String,
     pub message: String,
 }
+
+#[cfg(target_os = "windows")]
+fn is_process_running(name: &str) -> bool {
+    let filter = format!("IMAGENAME eq {}.exe", name);
+    if let Ok(output) = std::process::Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return stdout.to_lowercase().contains(&name.to_lowercase());
+    }
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_process_running(name: &str) -> bool {
+    std::process::Command::new("pgrep")
+        .arg("-x")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+pub fn guard_campus_guard() -> Option<ProcessAlert> {
+    if is_process_running("campus-guard") {
+        return None;
+    }
+
+    warn!("campus-guard not running, attempting restart");
+
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("cmd")
+        .args(["/C", "start", "", "campus-guard.exe"])
+        .spawn();
+
+    #[cfg(not(target_os = "windows"))]
+    let result = std::process::Command::new("./campus-guard").spawn();
+
+    match result {
+        Ok(child) => {
+            info!("campus-guard restarted with PID {}", child.id());
+            None
+        }
+        Err(e) => {
+            let alert = ProcessAlert {
+                policy_id: "builtin-campus-guard".to_string(),
+                process_name: "campus-guard".to_string(),
+                alert_type: "process_guard".to_string(),
+                message: format!("campus-guard 重启失败: {}", e),
+            };
+            Some(alert)
+        }
+    }
+}

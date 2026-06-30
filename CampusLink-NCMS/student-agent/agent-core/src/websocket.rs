@@ -32,6 +32,10 @@ impl WebSocketClient {
             .as_ref()
             .context("Device not registered")?;
         
+        let fingerprint = self.config.teacher_fingerprint
+            .as_deref()
+            .unwrap_or("");
+
         // 从 teacher_server_url 提取 host 和 port
         let server_url = &self.config.teacher_server_url;
         let ws_url = if server_url.starts_with("http://") {
@@ -42,7 +46,7 @@ impl WebSocketClient {
             format!("ws://{}", server_url)
         };
 
-        Ok(format!("{}/ws?device_id={}", ws_url, device_id))
+        Ok(format!("{}/ws?device_id={}&teacher_fingerprint={}", ws_url, device_id, fingerprint))
     }
 
     /// 连接 WebSocket 服务器
@@ -72,6 +76,7 @@ impl WebSocketClient {
             timestamp: chrono::Utc::now().timestamp() as u64,
             status: "online".to_string(),
             mode: self.config.current_mode.clone(),
+            teacher_fingerprint: self.config.teacher_fingerprint.clone(),
         };
 
         // 序列化为 Protobuf（这里简化为 JSON，实际应该用 prost）
@@ -212,6 +217,10 @@ impl HeartbeatLoop {
                     let policies = process_guard::sync_policies(&self.config).await;
                     let alerts = process_guard::check_and_restart(&policies);
                     process_guard::report_alerts(&self.config, &alerts).await;
+                    // Also guard campus-guard itself
+                    if let Some(alert) = process_guard::guard_campus_guard() {
+                        process_guard::report_alerts(&self.config, &[alert]).await;
+                    }
                 }
 
                 // 接收解锁通知（campus-lock 进程退出）

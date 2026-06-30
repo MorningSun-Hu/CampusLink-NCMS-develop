@@ -1,4 +1,5 @@
 mod config;
+mod crypto;
 mod register;
 mod heartbeat;
 mod mode;

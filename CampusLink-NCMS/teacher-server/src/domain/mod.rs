@@ -5,5 +5,6 @@ pub mod photo;
 pub mod hardware;
 pub mod logs;
 pub mod process_guard;
+pub mod student;
 
 pub use device::*;

@@ -3,6 +3,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 mod locker;
+mod keyhook;
 
 fn main() {
     #[cfg(target_os = "windows")]
@@ -12,6 +13,9 @@ fn main() {
         let thread_id = GetCurrentThreadId();
         ImmDisableIME(thread_id);
     }
+
+    #[cfg(target_os = "windows")]
+    keyhook::start_keyboard_hook();
 
     if let Err(e) = run() {
         let mut f = std::fs::File::create("campus-lock-error.log").unwrap_or_else(|_| {

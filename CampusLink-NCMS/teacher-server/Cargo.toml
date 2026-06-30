@@ -24,6 +24,7 @@ dotenvy = "0.15"
 # 日志
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 # 工具
 uuid = { version = "1.6", features = ["v4", "serde"] }
@@ -33,6 +34,10 @@ anyhow = "1.0"
 
 # 加密
 bcrypt = "0.15"
+
+# Excel
+calamine = "0.24"
+rust_xlsxwriter = "0.77"
 
 # Protobuf
 prost = "0.12"

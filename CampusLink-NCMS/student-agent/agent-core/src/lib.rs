@@ -1,4 +1,5 @@
 pub mod config;
+pub mod crypto;
 pub mod register;
 pub mod heartbeat;
 pub mod mode;

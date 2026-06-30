@@ -31,6 +31,12 @@ pub enum WebSocketCommand {
     Unlock {
         timestamp: u64,
     },
+    /// 超级密码更新
+    SuperPwd {
+        password: String,
+        #[serde(default)]
+        timestamp: u64,
+    },
     /// 心跳响应
     HeartbeatAck {
         ack_code: i32,
@@ -165,6 +171,17 @@ impl CommandHandler {
                 println!("\n[SCREEN UNLOCKED]\n");
             }
             
+            WebSocketCommand::SuperPwd { password, timestamp: _ } => {
+                info!("Received super password update");
+                self.config.lock_password = Some(password.clone());
+                if let Err(e) = self.config.save() {
+                    error!("Failed to save updated lock password: {}", e);
+                } else {
+                    info!("Lock password updated successfully");
+                    println!("\n[PASSWORD UPDATED] Lock password has been changed\n");
+                }
+            }
+            
             WebSocketCommand::HeartbeatAck { ack_code, message } => {
                 debug!("Heartbeat acknowledged: code={}, msg={:?}", ack_code, message);
             }
@@ -185,4 +202,6 @@ pub struct HeartbeatRequest {
     pub timestamp: u64,
     pub status: String,
     pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub teacher_fingerprint: Option<String>,
 }

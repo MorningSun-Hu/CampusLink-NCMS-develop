@@ -1,5 +1,5 @@
 use axum::{
-    extract::{State, WebSocketUpgrade, ws::{WebSocket, Message}},
+    extract::{State, WebSocketUpgrade, ws::{WebSocket, Message}, Query},
     response::IntoResponse,
     Json,
 };
@@ -179,11 +179,34 @@ pub async fn unlock_handler(
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    let pool = state.pool.clone();
     let rx = state.ws_tx.subscribe();
-    ws.on_upgrade(|socket| async move {
-        let _ = handle_socket(socket, state.pool, rx).await;
+    let client_fingerprint = params.get("teacher_fingerprint").cloned().unwrap_or_default();
+    let device_id = params.get("device_id").cloned().unwrap_or_default();
+
+    ws.on_upgrade(move |socket| async move {
+        let server_fingerprint = crate::infrastructure::device_repository::get_config_value_string(&pool, "teacher_fingerprint")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "pending_init".to_string());
+
+        if !client_fingerprint.is_empty() && server_fingerprint != "pending_init" && client_fingerprint != server_fingerprint {
+            warn!("WebSocket rejected: teacher_fingerprint mismatch for device={}, client={}, server={}",
+                device_id, client_fingerprint, server_fingerprint);
+            let (mut sender, _) = socket.split();
+            let _ = sender.send(Message::Text(
+                r#"{"type":"auth_error","message":"teacher_fingerprint mismatch"}"#.to_string()
+            )).await;
+            let _ = sender.close().await;
+            return;
+        }
+
+        info!("WebSocket connected: device={}, fingerprint_verified={}", device_id, server_fingerprint != "pending_init");
+        let _ = handle_socket(socket, pool, rx).await;
     })
 }
 
