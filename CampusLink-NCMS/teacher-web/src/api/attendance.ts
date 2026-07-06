@@ -1,10 +1,5 @@
-import axios from 'axios'
+import api from './http'
 import type { ApiResponse, AttendanceRecord, AttendanceStatistics } from './types'
-
-const api = axios.create({
-  baseURL: '/api',
-  timeout: 10000,
-})
 
 export interface RetroactiveParams {
   student_id: string

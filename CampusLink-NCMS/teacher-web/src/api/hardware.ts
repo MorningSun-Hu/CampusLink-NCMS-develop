@@ -1,9 +1,4 @@
-import axios from 'axios'
-
-const api = axios.create({
-  baseURL: '/api',
-  timeout: 10000,
-})
+import api from './http'
 
 export interface HardwareInfo {
   id: string

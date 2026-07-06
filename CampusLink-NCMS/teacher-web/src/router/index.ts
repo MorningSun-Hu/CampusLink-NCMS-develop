@@ -58,6 +58,16 @@ const router = createRouter({
           name: 'Settings',
           component: () => import('@/views/Settings.vue'),
         },
+        {
+          path: 'repairs',
+          name: 'Repairs',
+          component: () => import('@/views/Repairs.vue'),
+        },
+        {
+          path: 'device-whitelist',
+          name: 'DeviceWhitelist',
+          component: () => import('@/views/DeviceWhitelist.vue'),
+        },
       ],
     },
   ],

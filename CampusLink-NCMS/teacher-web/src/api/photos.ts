@@ -1,10 +1,5 @@
-import axios from 'axios'
+import api from './http'
 import type { ApiResponse, PhotoRecord } from './types'
-
-const api = axios.create({
-  baseURL: '/api',
-  timeout: 30000,
-})
 
 export async function uploadPhoto(file: File, inspectionId?: string) {
   const formData = new FormData()

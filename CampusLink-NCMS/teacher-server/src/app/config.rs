@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use serde::Deserialize;
 
@@ -39,7 +41,13 @@ impl Config {
 
     fn load_from_file() -> Result<Self> {
         let config_path = std::env::var("CONFIG_PATH")
-            .unwrap_or_else(|_| "config/config.toml".to_string());
+            .unwrap_or_else(|_| {
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_else(|| PathBuf::from("."));
+                exe_dir.join("config/config.toml").to_string_lossy().to_string()
+            });
 
         let settings = config::Config::builder()
             .add_source(config::File::with_name(&config_path))

@@ -1,4 +1,4 @@
-import axios from 'axios'
+import api from './http'
 import type { ApiResponse } from './types'
 
 export interface Student {
@@ -32,8 +32,6 @@ export interface UpdateStudentRequest {
   seatNo?: string
   status?: string
 }
-
-const api = axios.create({ baseURL: '/api', timeout: 8000 })
 
 export async function listStudents(params: { page?: number; pageSize?: number; keyword?: string }) {
   const response = await api.get<ApiResponse<StudentListResponse>>('/students', { params })

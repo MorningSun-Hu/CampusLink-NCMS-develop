@@ -1,10 +1,5 @@
-import axios from 'axios'
+import api from './http'
 import type { ApiResponse, InspectionRecord, AlertRecord } from './types'
-
-const api = axios.create({
-  baseURL: '/api',
-  timeout: 10000,
-})
 
 export async function getInspectionList(params?: { inspection_type?: string; device_id?: string }) {
   const response = await api.get<ApiResponse<InspectionRecord[]>>('/inspection', { params })

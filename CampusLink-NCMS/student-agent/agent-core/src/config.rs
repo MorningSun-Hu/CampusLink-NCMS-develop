@@ -16,6 +16,7 @@ pub struct Config {
     pub auth_token: Option<String>,
     pub token_expires_at: Option<String>,
     pub lock_password: Option<String>,
+    pub session_key: Option<String>,
     #[serde(skip)]
     pub is_locked: bool,
     #[serde(skip)]
@@ -36,6 +37,7 @@ impl Config {
             auth_token: None,
             token_expires_at: None,
             lock_password: Some("admin123".to_string()),
+            session_key: None,
             is_locked: false,
             lock_pid: None,
         }

@@ -21,6 +21,7 @@ pub struct RegisterDeviceResponse {
     pub teacher_fingerprint: String,
     pub initial_mode: String,
     pub heartbeat_interval_seconds: u32,
+    pub session_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,8 +95,9 @@ pub async fn collect_and_register(config: &mut Config) -> Result<()> {
 
     config.device_id = Some(response.device_id);
     config.teacher_fingerprint = Some(response.teacher_fingerprint);
-    config.current_mode = response.initial_mode;
+    config.current_mode = response.initial_mode.clone();
     config.heartbeat_interval_seconds = response.heartbeat_interval_seconds as u64;
+    config.session_key = Some(response.session_key);
     config.save()?;
 
     info!("Registration completed, device_id: {}", config.device_id.as_ref().unwrap());

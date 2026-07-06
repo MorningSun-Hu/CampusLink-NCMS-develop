@@ -7,6 +7,7 @@ use tracing::{info, warn, error, debug};
 use crate::config::Config;
 use crate::command_handler::{CommandHandler, HeartbeatRequest};
 use crate::process_guard;
+use crate::crypto;  // added for message encryption
 
 /// WebSocket 客户端
 pub struct WebSocketClient {
@@ -36,7 +37,10 @@ impl WebSocketClient {
             .as_deref()
             .unwrap_or("");
 
-        // 从 teacher_server_url 提取 host 和 port
+        let session_key = self.config.session_key
+            .as_deref()
+            .unwrap_or("");
+
         let server_url = &self.config.teacher_server_url;
         let ws_url = if server_url.starts_with("http://") {
             server_url.replace("http://", "ws://")
@@ -46,7 +50,7 @@ impl WebSocketClient {
             format!("ws://{}", server_url)
         };
 
-        Ok(format!("{}/ws?device_id={}&teacher_fingerprint={}", ws_url, device_id, fingerprint))
+        Ok(format!("{}/ws?device_id={}&teacher_fingerprint={}&session_key={}", ws_url, device_id, fingerprint, session_key))
     }
 
     /// 连接 WebSocket 服务器
@@ -82,10 +86,19 @@ impl WebSocketClient {
         // 序列化为 Protobuf（这里简化为 JSON，实际应该用 prost）
         let json = serde_json::to_string(&heartbeat)?;
         let ws_stream = self.ws_stream.as_mut().unwrap();
-        
-        ws_stream.send(Message::Text(json.into()))
-            .await
-            .context("Failed to send heartbeat")?;
+
+        // Encrypt with session key if available
+        if let Some(ref key) = self.config.session_key {
+            let encrypted = crypto::encrypt_message(&json, key)
+                .map_err(|e| anyhow::anyhow!("encrypt: {}", e))?;
+            ws_stream.send(Message::Binary(encrypted.into()))
+                .await
+                .context("Failed to send heartbeat")?;
+        } else {
+            ws_stream.send(Message::Text(json.into()))
+                .await
+                .context("Failed to send heartbeat")?;
+        }
 
         debug!("Heartbeat sent");
         Ok(())
@@ -103,6 +116,23 @@ impl WebSocketClient {
             Some(Ok(Message::Text(text))) => {
                 debug!("Received message: {}", text);
                 Ok(Some(text.to_string()))
+            }
+            Some(Ok(Message::Binary(data))) => {
+                if let Some(ref key) = self.config.session_key {
+                    match crypto::decrypt_message(&data, key) {
+                        Ok(text) => {
+                            debug!("Received encrypted message: {}", text);
+                            Ok(Some(text))
+                        }
+                        Err(e) => {
+                            error!("Failed to decrypt message: {}", e);
+                            Ok(None)
+                        }
+                    }
+                } else {
+                    debug!("Received binary message (no session key)");
+                    Ok(None)
+                }
             }
             Some(Ok(Message::Ping(data))) => {
                 debug!("Received ping");

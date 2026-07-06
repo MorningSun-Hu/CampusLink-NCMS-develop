@@ -49,6 +49,16 @@
               <span>系统设置</span>
             </div>
           </router-link>
+          <router-link to="/repairs" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>维修工单</span>
+            </div>
+          </router-link>
+          <router-link to="/device-whitelist" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>设备白名单</span>
+            </div>
+          </router-link>
         </div>
       </el-aside>
       <el-container>

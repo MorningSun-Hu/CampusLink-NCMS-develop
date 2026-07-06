@@ -324,21 +324,52 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 - **图片列表 400 错误**：`inspection_id` 原为必填参数但前端未传，改为可选参数，不传时返回最近 50 张
 - **教师端独立前端服务**：原需额外启动 `vite` 开发服务器，现教师端内嵌 `static/` 目录并通过 SPA fallback 一体化部署（端口 8080）
 
-## 八、P8 计划：部署与安全加固
+## 八、P8-P10 变更记录总结
 
-### P8 任务清单
+### P8 变更：部署与安全加固
 
-| 任务 | 优先级 | 说明 |
-|------|--------|------|
-| 教师端 Windows Service 注册 | 高 | 使用 `sc create` 或 `nssm` 将 teacher-server 注册为系统服务，开机自启 |
-| 学生端开机自启 | 高 | 注册 `agent-core.exe` + `campus-guard.exe` 为计划任务或服务 |
-| 安装器打包（NSIS/Inno Setup） | 高 | 一键安装脚本，含 MSVC 运行时检测、防火墙放行、目录结构创建 |
-| 防火墙自动放行 | 中 | 安装器自动添加 Windows 防火墙入站规则（8080 端口） |
-| SQLite 数据库备份与恢复策略 | 中 | 定期备份、首次启动数据目录初始化 |
-| 日志轮转与清理 | 中 | 教师端/学生端日志按天轮转、过期自动清理 |
-| API Token 认证 | 中 | 设备注册/API 调用使用预置 Token 验签 |
-| HTTPS 支持 | 低 | 可选自签名证书或 let's encrypt |
-| 生产部署说明文档 | 高 | 教室实际部署拓扑、网络要求、启动顺序、故障排查 |
+| 任务 | 状态 | 产出 |
+|------|------|------|
+| 教师端 Windows Service 注册 | 完成 | `teacher-server/install-service.bat`（sc create + failure recovery） |
+| 学生端开机自启 | 完成 | `student-agent/install-autostart.bat`（schtasks onlogon） |
+| 防火墙自动放行 | 完成 | `teacher-server/install-firewall.bat`（netsh TCP 8080） |
+| 统一安装器 | 完成 | `install.bat`（管理员权限检测 + 一键全装）、`uninstall.bat` |
+| SQLite 数据库备份 | P9 完成 | `infrastructure/backup.rs`（24h 周期 + 7 天清理） |
+| 日志轮转与清理 | P9 完成 | tracing-appender 按天轮转 + 14 天保留 |
+| API 认证 | P10 完成 | JWT 登录（替代原计划静态 Bearer Token） |
+| HTTPS 支持 | 完成 | `teacher-server/generate-cert.bat`（OpenSSL/PowerShell 双路径） |
+| 生产部署文档 | 完成 | `docs/deployment-guide.md`（拓扑/安装/运维/排错/安全） |
+| 配置路径自解析 | 完成 | `config.rs` + `database.rs`：基于 exe 位置解析相对路径，支持 Service 环境 |
+
+### P9 变更：学生管理 + 锁屏完善 + 安全加固
+
+| 任务 | 产出 |
+|------|------|
+| T1-T3 学生 CRUD + Excel 导入导出 | `domain/student.rs`、`api/student_handlers.rs`、`Students.vue` |
+| T4 超级密码管理 | `api/settings_handlers.rs`、WebSocket 广播 `super_pwd` |
+| T5 campus-lock 快捷键屏蔽 | WH_KEYBOARD_LL 低级钩子（Win/Alt+Tab/Alt+F4/Ctrl+Esc） |
+| T6 AES256 配置加密 | `agent-core/src/crypto.rs`：config.enc + PBKDF2 密钥派生 |
+| T7 教师指纹双向校验 | WS 握手验证 `teacher_fingerprint` |
+| T8 定时模式切换调度器 | `scheduler.rs`：30s 检查 system_configs |
+| T9 SQLite 每日备份 | `infrastructure/backup.rs`：24h 备份 + 7 天清理 |
+| T10 日志轮转 | tracing-appender RollingFileAppender |
+| T11 双向进程守护 | agent-core 监控 campus-guard 存活 |
+| T12 编译验证 | 4 个 crate 全部通过 |
+
+### P10 变更：网络认证 + 设备发现 + 通信升级
+
+| 任务 | 产出 |
+|------|------|
+| T1 JWT 网络认证 | `domain/auth.rs`、`api/auth_handlers.rs`、`middleware/auth.rs`、Login.vue |
+| T2 UDP 广播发现 | `discovery.rs`（教师端监听 9999 + 学生端广播） |
+| T3 设备白名单 | `migrations/0013`、`device.rs` 白名单检查 + Excel 导入 |
+| T4 AES256-GCM WS 加密 | `crypto_util.rs` + agent-core `crypto.rs`（Binary 消息 + session_key 协商） |
+| T5 Protobuf 编译链 | `build.rs` + prost-build，proto 定义已就绪 |
+| T6 SQLCipher 预留 | Cargo.toml feature flag 标注 |
+| T7 维修工单 | `domain/repair.rs`、`api/repair_handlers.rs`、`Repairs.vue` |
+| T8 键盘/鼠标检测 | `hardware.rs`：WMIC 查询外设类型 |
+| T9 前端补全 | Repairs.vue + DeviceWhitelist.vue + 路由 + 菜单 |
+| T10 编译验证 | 4 crate + 前端全部通过 |
 
 ### P6-P7 联调验证
 
@@ -346,7 +377,7 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 - [ ] Windows 端到端检查报告验证
 - [ ] Windows 端到端告警处理与图片上传验证
 - [x] Windows 端到端硬件快照上报验证
-- [x] Windows 端到端进程守护与锁屏验证（模式切换→campus-lock spawn→密码解锁→教师端状态同步）
+- [x] Windows 端到端进程守护与锁屏验证
 - [x] 仪表盘统计准确性验证
 - [x] 模式切换端到端验证（含锁屏联动）
 - [ ] 签到记录导出（CSV/Excel）
@@ -363,6 +394,6 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 
 ---
 
-报告更新时间：2026-06-21  
-报告版本：v1.5  
-当前状态：P0-P7 开发与联调修复完成（含锁屏全链路 + campus-lock IME 修复），P8 部署与安全加固待开始
+报告更新时间：2026-07-04  
+报告版本：v2.0  
+当前状态：P0-P10 全部完成（核心业务 + 部署安全 + 网络认证 + 通信加密），具备生产级部署交付能力

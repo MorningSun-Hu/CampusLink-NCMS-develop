@@ -3,6 +3,9 @@ mod api;
 mod domain;
 mod infrastructure;
 mod scheduler;
+mod middleware;
+mod discovery;
+mod crypto_util;
 
 use anyhow::Result;
 use tracing::info;

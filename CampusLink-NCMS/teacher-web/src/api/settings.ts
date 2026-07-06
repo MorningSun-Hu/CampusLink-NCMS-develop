@@ -1,11 +1,9 @@
-import axios from 'axios'
+import api from './http'
 import type { ApiResponse } from './types'
 
 export interface LockPasswordStatus {
   configured: boolean
 }
-
-const api = axios.create({ baseURL: '/api', timeout: 5000 })
 
 export async function getLockPasswordStatus() {
   const response = await api.get<ApiResponse<LockPasswordStatus>>('/settings/lock-password')

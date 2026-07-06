@@ -159,6 +159,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures-util",
+ "hex",
  "hostname",
  "local-ip-address",
  "mac_address",

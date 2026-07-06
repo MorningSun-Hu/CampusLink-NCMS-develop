@@ -1,6 +1,7 @@
 pub mod config;
 pub mod crypto;
 pub mod register;
+pub mod discovery;
 pub mod heartbeat;
 pub mod mode;
 pub mod websocket;

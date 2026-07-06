@@ -1,10 +1,5 @@
-import axios from 'axios'
+import api from './http'
 import type { ApiResponse, RegisterDeviceRequest, RegisterDeviceResponse, Device } from './types'
-
-const api = axios.create({
-  baseURL: '/api',
-  timeout: 5000,
-})
 
 export async function registerDevice(data: RegisterDeviceRequest) {
   const response = await api.post<ApiResponse<RegisterDeviceResponse>>('/devices/register', data)

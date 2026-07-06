@@ -10,6 +10,7 @@ mod inspection;
 mod student_auth;
 mod hardware;
 mod process_guard;
+mod discovery;
 
 use anyhow::Result;
 use tracing::{info, error, warn};
@@ -33,6 +34,21 @@ async fn main() -> Result<()> {
 
     let mut config = Config::load().unwrap_or_else(|_| Config::default());
     info!("Configuration loaded");
+
+    // Try UDP discovery if teacher_server_url is not configured
+    if config.teacher_server_url.is_empty() || config.teacher_server_url == "http://localhost:8080" {
+        info!("Attempting UDP discovery...");
+        match discovery::discover(5).await {
+            Ok(url) => {
+                config.teacher_server_url = url;
+                config.save()?;
+                info!("Teacher server discovered: {}", config.teacher_server_url);
+            }
+            Err(e) => {
+                warn!("Discovery failed: {}. Using default URL.", e);
+            }
+        }
+    }
 
     if config.device_id.is_none() {
         info!("Device not registered, starting registration...");

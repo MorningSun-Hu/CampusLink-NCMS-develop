@@ -159,6 +159,7 @@ pub async fn submit(config: &Config) -> Result<()> {
         "gpu_info": snapshot.gpu_info,
         "os_version": snapshot.os_version,
         "hostname": snapshot.hostname,
+        "peripherals": detect_peripherals(),
     });
 
     let resp = client.post(&url).json(&body).send().await?;
@@ -170,4 +171,58 @@ pub async fn submit(config: &Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PeripheralInfo {
+    pub device_type: String,
+    pub name: String,
+    pub connected: bool,
+}
+
+pub fn detect_peripherals() -> Vec<PeripheralInfo> {
+    let mut peripherals = Vec::new();
+
+    let has_keyboard = detect_device_type("keyboard");
+    let has_mouse = detect_device_type("mouse");
+
+    peripherals.push(PeripheralInfo {
+        device_type: "keyboard".to_string(),
+        name: "USB/PS2 Keyboard".to_string(),
+        connected: has_keyboard,
+    });
+    peripherals.push(PeripheralInfo {
+        device_type: "mouse".to_string(),
+        name: "USB/PS2 Mouse".to_string(),
+        connected: has_mouse,
+    });
+
+    peripherals
+}
+
+#[cfg(target_os = "windows")]
+fn detect_device_type(device_type: &str) -> bool {
+    let class = match device_type {
+        "keyboard" => "Keyboard",
+        "mouse" => "Mouse",
+        _ => return false,
+    };
+    std::process::Command::new("wmic")
+        .args(["path", "Win32_Keyboard", "get", "Name"])
+        .output()
+        .map(|o| {
+            let text = String::from_utf8_lossy(&o.stdout);
+            text.lines().filter(|l| !l.trim().is_empty() && !l.contains("Name")).count() > 0
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn detect_device_type(device_type: &str) -> bool {
+    let path = match device_type {
+        "keyboard" => "/dev/input/by-path",
+        "mouse" => "/dev/input/by-path",
+        _ => return false,
+    };
+    std::fs::read_dir(path).map(|entries| entries.count() > 0).unwrap_or(false)
 }
