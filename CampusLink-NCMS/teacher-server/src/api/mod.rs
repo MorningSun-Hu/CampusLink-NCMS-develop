@@ -40,8 +40,25 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
     let jwt_secret = crate::infrastructure::device_repository::get_config_value_string(pool, "jwt_secret")
         .await
         .ok()
-        .flatten()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .flatten();
+
+    let jwt_secret = match jwt_secret {
+        Some(s) => s,
+        None => {
+            let secret = uuid::Uuid::new_v4().to_string();
+            // Persist to system_configs so login() and middleware use the same key
+            let id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                r#"INSERT INTO system_configs (id, config_key, config_value, scope, description, updated_at)
+                   VALUES (?, 'jwt_secret', ?, 'security', 'JWT signing secret', datetime('now'))"#
+            )
+            .bind(&id)
+            .bind(&secret)
+            .execute(pool)
+            .await;
+            secret
+        }
+    };
 
     // Init default admin user
     let _ = crate::domain::auth::init_default_admin(pool).await;
