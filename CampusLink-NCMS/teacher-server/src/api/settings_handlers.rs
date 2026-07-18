@@ -68,3 +68,99 @@ pub async fn update_lock_password_handler(
         }
     }
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleConfig {
+    pub enabled: bool,
+    pub time: Option<String>,
+    pub target_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateScheduleRequest {
+    pub enabled: bool,
+    pub time: Option<String>,
+    pub target_mode: Option<String>,
+}
+
+pub async fn get_schedule_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let enabled = sqlx::query_scalar::<_, String>(
+        "SELECT config_value FROM system_configs WHERE config_key = 'schedule_mode'"
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+
+    let time = sqlx::query_scalar::<_, String>(
+        "SELECT config_value FROM system_configs WHERE config_key = 'schedule_time'"
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+
+    let target_mode = sqlx::query_scalar::<_, String>(
+        "SELECT config_value FROM system_configs WHERE config_key = 'target_mode'"
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+
+    Json(ApiResponse::success(ScheduleConfig {
+        enabled: enabled.as_deref() == Some("enabled"),
+        time,
+        target_mode,
+    }))
+}
+
+pub async fn update_schedule_handler(
+    State(state): State<AppState>,
+    Json(req): Json<UpdateScheduleRequest>,
+) -> impl IntoResponse {
+    let enabled_val = if req.enabled { "enabled" } else { "disabled" };
+    let _ = sqlx::query(
+        r#"INSERT INTO system_configs (id, config_key, config_value, scope, description, updated_at)
+           VALUES (?, 'schedule_mode', ?, 'schedule', 'Mode switch scheduler', datetime('now'))
+           ON CONFLICT(config_key) DO UPDATE SET config_value = ?, updated_at = datetime('now')"#
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(enabled_val)
+    .bind(enabled_val)
+    .execute(&state.pool)
+    .await;
+
+    if let Some(ref time) = req.time {
+        let _ = sqlx::query(
+            r#"INSERT INTO system_configs (id, config_key, config_value, scope, description, updated_at)
+               VALUES (?, 'schedule_time', ?, 'schedule', 'Scheduled mode switch time (HH:MM)', datetime('now'))
+               ON CONFLICT(config_key) DO UPDATE SET config_value = ?, updated_at = datetime('now')"#
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(time)
+        .bind(time)
+        .execute(&state.pool)
+        .await;
+    }
+
+    if let Some(ref mode) = req.target_mode {
+        let _ = sqlx::query(
+            r#"INSERT INTO system_configs (id, config_key, config_value, scope, description, updated_at)
+               VALUES (?, 'target_mode', ?, 'schedule', 'Target mode for scheduled switch', datetime('now'))
+               ON CONFLICT(config_key) DO UPDATE SET config_value = ?, updated_at = datetime('now')"#
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(mode)
+        .bind(mode)
+        .execute(&state.pool)
+        .await;
+    }
+
+    info!("Schedule config updated: enabled={}, time={:?}, mode={:?}", req.enabled, req.time, req.target_mode);
+    Json(ApiResponse::success("ok"))
+}

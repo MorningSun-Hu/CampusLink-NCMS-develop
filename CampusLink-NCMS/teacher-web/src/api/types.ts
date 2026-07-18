@@ -37,6 +37,8 @@ export interface DashboardData {
   registeredDeviceCount: number
   onlineDeviceCount: number
   offlineDeviceCount: number
+  pendingRepairCount: number
+  pendingWhitelistCount: number
 }
 
 export interface AttendanceStatistics {

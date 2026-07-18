@@ -21,18 +21,50 @@
         {{ statusMsg }}
       </div>
     </el-card>
+
+    <el-card class="setting-card">
+      <template #header>
+        <span class="card-title">定时模式切换</span>
+      </template>
+      <p class="card-desc">设定指定时间将所有在线设备切换为目标模式。每天仅执行一次。</p>
+      <el-form label-width="100px">
+        <el-form-item label="启用调度">
+          <el-switch v-model="scheduleEnabled" />
+        </el-form-item>
+        <el-form-item label="切换时间">
+          <el-time-picker v-model="scheduleTime" format="HH:mm" value-format="HH:mm" placeholder="选择时间" />
+        </el-form-item>
+        <el-form-item label="目标模式">
+          <el-select v-model="scheduleTargetMode" placeholder="选择模式" style="width: 200px">
+            <el-option label="开放模式" value="open" />
+            <el-option label="教学模式" value="teaching" />
+            <el-option label="有条件开放" value="conditional_open" />
+            <el-option label="考试模式" value="exam" />
+            <el-option label="锁屏模式" value="locked" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="handleSaveSchedule" :loading="savingSchedule">保存调度配置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getLockPasswordStatus, updateLockPassword } from '@/api/settings'
+import { getLockPasswordStatus, updateLockPassword, getScheduleConfig, updateScheduleConfig } from '@/api/settings'
 import { ElMessage } from 'element-plus'
 
 const newPassword = ref('')
 const submitting = ref(false)
 const statusMsg = ref('')
 const statusError = ref(false)
+
+const scheduleEnabled = ref(false)
+const scheduleTime = ref('')
+const scheduleTargetMode = ref('')
+const savingSchedule = ref(false)
 
 onMounted(async () => {
   try {
@@ -43,6 +75,14 @@ onMounted(async () => {
     statusMsg.value = '获取状态失败'
     statusError.value = true
   }
+  try {
+    const config = await getScheduleConfig()
+    if (config.data) {
+      scheduleEnabled.value = config.data.enabled
+      scheduleTime.value = config.data.time || ''
+      scheduleTargetMode.value = config.data.targetMode || ''
+    }
+  } catch { /* ignore */ }
 })
 
 const handleUpdate = async () => {
@@ -61,6 +101,22 @@ const handleUpdate = async () => {
     ElMessage.error('更新失败: ' + (e?.response?.data?.message || e.message))
   } finally {
     submitting.value = false
+  }
+}
+
+const handleSaveSchedule = async () => {
+  savingSchedule.value = true
+  try {
+    await updateScheduleConfig({
+      enabled: scheduleEnabled.value,
+      time: scheduleTime.value || null,
+      targetMode: scheduleTargetMode.value || null,
+    })
+    ElMessage.success('调度配置已保存')
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e?.response?.data?.message || e.message))
+  } finally {
+    savingSchedule.value = false
   }
 }
 </script>

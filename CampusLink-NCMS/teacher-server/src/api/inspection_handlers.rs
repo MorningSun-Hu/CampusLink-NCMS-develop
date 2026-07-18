@@ -1,4 +1,5 @@
 use axum::{extract::State, response::IntoResponse, Json};
+use axum::http::header;
 use serde::Deserialize;
 use tracing::{info, error};
 
@@ -101,4 +102,41 @@ pub async fn resolve_alert_handler(
             Json(ApiResponse::error(500, "处理告警失败".to_string()))
         }
     }
+}
+
+pub async fn export_inspection_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match generate_inspection_csv(&state.pool).await {
+        Ok(data) => {
+            let headers = [
+                (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+                (header::CONTENT_DISPOSITION, "attachment; filename=\"inspections.csv\""),
+            ];
+            (headers, data).into_response()
+        }
+        Err(e) => {
+            error!("Export inspection failed: {}", e);
+            Json(ApiResponse::<()>::error(500, format!("导出失败: {}", e))).into_response()
+        }
+    }
+}
+
+async fn generate_inspection_csv(pool: &sqlx::SqlitePool) -> anyhow::Result<Vec<u8>> {
+    let records = inspection::list_inspections(pool, None, Some(10000)).await?;
+    let mut csv = String::from("ID,设备ID,检查类型,检查项目,状态,描述,检查人,创建时间\n");
+    for r in records {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},{}\n",
+            r.id,
+            r.device_id,
+            r.inspection_type,
+            r.item_name,
+            r.status,
+            r.description.as_deref().unwrap_or(""),
+            r.inspector.as_deref().unwrap_or(""),
+            r.created_at,
+        ));
+    }
+    Ok(csv.into_bytes())
 }

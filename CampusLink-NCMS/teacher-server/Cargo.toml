@@ -16,8 +16,8 @@ serde_json = "1.0"
 
 # 数据库
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "postgres", "uuid", "chrono"] }
-# SQLCipher 加密数据库: 启用 sqlcipher feature 时替换 sqlx
-# sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "sqlcipher", "uuid", "chrono"] }
+# SQLCipher 加密数据库: 编译时启用 --features sqlcipher 自动切换
+# 需要环境中有 libsqlcipher 库
 
 # 配置
 config = "0.14"
@@ -52,6 +52,10 @@ prost-types = "0.12"
 # 通道
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
+
+[features]
+default = []
+sqlcipher = []
 
 [build-dependencies]
 prost-build = "0.12"

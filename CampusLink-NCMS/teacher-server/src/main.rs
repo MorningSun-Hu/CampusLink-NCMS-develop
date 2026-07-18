@@ -6,6 +6,7 @@ mod scheduler;
 mod middleware;
 mod discovery;
 mod crypto_util;
+mod proto;
 
 use anyhow::Result;
 use tracing::info;

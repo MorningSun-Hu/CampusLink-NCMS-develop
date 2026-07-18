@@ -11,6 +11,7 @@ mod settings_handlers;
 mod auth_handlers;
 mod whitelist_handlers;
 mod repair_handlers;
+mod network_account_handlers;
 
 use axum::{routing::{get, post, delete, put}, Router, middleware};
 use axum::response::Html;
@@ -19,18 +20,19 @@ use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
 
 use handlers::{register_device_handler, list_devices_handler, mode_switch_handler, ws_handler, lock_screen_handler, unlock_handler, AppState};
-use attendance_handlers::{check_in_handler, statistics_handler, retroactive_handler, list_attendance_handler};
-use inspection_handlers::{submit_inspection_handler, list_inspections_handler, list_alerts_handler, resolve_alert_handler};
+use attendance_handlers::{check_in_handler, statistics_handler, retroactive_handler, list_attendance_handler, export_attendance_handler};
+use inspection_handlers::{submit_inspection_handler, list_inspections_handler, list_alerts_handler, resolve_alert_handler, export_inspection_handler};
 use photo_handlers::{upload_photo_handler, get_photo_handler, list_photos_handler};
 use hardware_handlers::{submit_snapshot_handler, get_snapshot_handler, list_changes_handler};
 use log_handlers::{query_logs_handler, export_logs_handler};
 use process_guard_handlers::{create_policy_handler, update_policy_handler, list_policies_handler, delete_policy_handler};
 use dashboard_handlers::dashboard_overview_handler;
 use student_handlers::{create_student_handler, list_students_handler, get_student_handler, update_student_handler, delete_student_handler, import_students_handler, export_students_handler};
-use settings_handlers::{get_lock_password_handler, update_lock_password_handler};
+use settings_handlers::{get_lock_password_handler, update_lock_password_handler, get_schedule_handler, update_schedule_handler};
 use auth_handlers::login_handler;
 use whitelist_handlers::{list_whitelist_handler, import_whitelist_handler, approve_whitelist_handler, delete_whitelist_handler};
 use repair_handlers::{create_repair_handler, list_repairs_handler, update_repair_handler, delete_repair_handler};
+use network_account_handlers::{list_accounts_handler, create_account_handler, update_account_handler, delete_account_handler};
 use crate::middleware::auth::auth_middleware;
 
 pub async fn create_app(pool: &SqlitePool) -> Router {
@@ -95,8 +97,10 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
         .route("/api/attendance/statistics", get(statistics_handler))
         .route("/api/attendance/retroactive", post(retroactive_handler))
         .route("/api/attendance", get(list_attendance_handler))
+        .route("/api/attendance/export", get(export_attendance_handler))
         .route("/api/inspection/submit", post(submit_inspection_handler))
         .route("/api/inspection", get(list_inspections_handler))
+        .route("/api/inspection/export", get(export_inspection_handler))
         .route("/api/alerts", get(list_alerts_handler))
         .route("/api/alerts/:id/resolve", post(resolve_alert_handler))
         .route("/api/photos/upload", post(upload_photo_handler))
@@ -121,6 +125,8 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
         .route("/api/students/:id", delete(delete_student_handler))
         .route("/api/settings/lock-password", get(get_lock_password_handler))
         .route("/api/settings/lock-password", put(update_lock_password_handler))
+        .route("/api/settings/schedule", get(get_schedule_handler))
+        .route("/api/settings/schedule", put(update_schedule_handler))
         .route("/api/devices/whitelist", get(list_whitelist_handler))
         .route("/api/devices/whitelist/import", post(import_whitelist_handler))
         .route("/api/devices/whitelist/:id/approve", post(approve_whitelist_handler))
@@ -129,6 +135,10 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
         .route("/api/repair-orders", get(list_repairs_handler))
         .route("/api/repair-orders/:id", put(update_repair_handler))
         .route("/api/repair-orders/:id", delete(delete_repair_handler))
+        .route("/api/network-accounts", get(list_accounts_handler))
+        .route("/api/network-accounts", post(create_account_handler))
+        .route("/api/network-accounts/:id", put(update_account_handler))
+        .route("/api/network-accounts/:id", delete(delete_account_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     let app = Router::new()

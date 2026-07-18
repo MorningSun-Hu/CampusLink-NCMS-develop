@@ -27,6 +27,20 @@
         </el-card>
       </el-col>
     </el-row>
+    <el-row :gutter="20" style="margin-top: 20px">
+      <el-col :span="6">
+        <el-card class="stat-card">
+          <div class="stat-label">待处理工单</div>
+          <div class="stat-value warn">{{ stats.pendingRepairCount || 0 }}</div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card class="stat-card">
+          <div class="stat-label">待审核白名单</div>
+          <div class="stat-value warn">{{ stats.pendingWhitelistCount || 0 }}</div>
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
@@ -39,6 +53,8 @@ const stats = ref({
   registeredDeviceCount: 0,
   onlineDeviceCount: 0,
   offlineDeviceCount: 0,
+  pendingRepairCount: 0,
+  pendingWhitelistCount: 0,
 })
 
 const loadStats = async () => {
@@ -92,5 +108,9 @@ onMounted(() => {
 
 .stat-value.offline {
   color: #f56c6c;
+}
+
+.stat-value.warn {
+  color: #e6a23c;
 }
 </style>

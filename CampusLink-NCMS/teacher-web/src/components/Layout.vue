@@ -59,6 +59,11 @@
               <span>设备白名单</span>
             </div>
           </router-link>
+          <router-link to="/network-accounts" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>网络认证</span>
+            </div>
+          </router-link>
         </div>
       </el-aside>
       <el-container>
@@ -77,6 +82,14 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue'
+import { useWebSocket } from '@/composables/useWebSocket'
+
+const { connect } = useWebSocket()
+
+onMounted(() => {
+  connect()
+})
 </script>
 
 <style scoped>

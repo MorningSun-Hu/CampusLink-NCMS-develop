@@ -22,3 +22,7 @@ export async function retroactive(data: RetroactiveParams) {
   const response = await api.post<ApiResponse<null>>('/attendance/retroactive', data)
   return response.data
 }
+
+export function getExportAttendanceUrl() {
+  return '/api/attendance/export'
+}

@@ -15,3 +15,7 @@ export async function resolveAlert(alertId: string) {
   const response = await api.post<ApiResponse<null>>(`/alerts/${alertId}/resolve`)
   return response.data
 }
+
+export function getExportInspectionUrl() {
+  return '/api/inspection/export'
+}

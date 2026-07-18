@@ -1,18 +1,33 @@
 use anyhow::{Context, Result};
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use std::{path::{Path, PathBuf}, str::FromStr};
+use tracing::info;
 
 pub async fn create_sqlite_pool(database_url: &str) -> Result<SqlitePool> {
     let resolved_url = resolve_database_url(database_url);
     ensure_sqlite_parent_dir(&resolved_url)?;
 
-    let options = SqliteConnectOptions::from_str(&resolved_url)?
+    let mut options = SqliteConnectOptions::from_str(&resolved_url)?
         .create_if_missing(true);
+
+    #[cfg(feature = "sqlcipher")]
+    {
+        options = options.pragma("key", "campuslink_secret_key_2026".to_string());
+        info!("SQLCipher encryption enabled (sqlcipher feature active)");
+    }
 
     let pool = SqlitePoolOptions::new()
         .max_connections(10)
         .connect_with(options)
         .await?;
+
+    #[cfg(feature = "sqlcipher")]
+    {
+        sqlx::query("PRAGMA cipher_memory_security = ON")
+            .execute(&pool)
+            .await
+            .ok();
+    }
 
     Ok(pool)
 }

@@ -68,6 +68,11 @@ const router = createRouter({
           name: 'DeviceWhitelist',
           component: () => import('@/views/DeviceWhitelist.vue'),
         },
+        {
+          path: 'network-accounts',
+          name: 'NetworkAccounts',
+          component: () => import('@/views/NetworkAccounts.vue'),
+        },
       ],
     },
   ],

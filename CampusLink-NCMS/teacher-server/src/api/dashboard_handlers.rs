@@ -12,6 +12,8 @@ pub struct DashboardOverview {
     pub registered_device_count: i64,
     pub online_device_count: i64,
     pub offline_device_count: i64,
+    pub pending_repair_count: i64,
+    pub pending_whitelist_count: i64,
 }
 
 pub async fn dashboard_overview_handler(
@@ -47,10 +49,24 @@ async fn get_dashboard_overview(pool: &SqlitePool) -> Result<DashboardOverview, 
     .fetch_one(pool)
     .await?;
 
+    let pending_repair_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM repair_orders WHERE status = 'pending'"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let pending_whitelist_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM device_whitelist WHERE status = 'pending'"
+    )
+    .fetch_one(pool)
+    .await?;
+
     Ok(DashboardOverview {
         student_count: student_count.0,
         registered_device_count: registered_device_count.0,
         online_device_count: online_device_count.0,
         offline_device_count: offline_device_count.0,
+        pending_repair_count: pending_repair_count.0,
+        pending_whitelist_count: pending_whitelist_count.0,
     })
 }

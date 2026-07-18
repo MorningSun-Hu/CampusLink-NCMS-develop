@@ -8,5 +8,6 @@ pub mod process_guard;
 pub mod student;
 pub mod auth;
 pub mod repair;
+pub mod network_account;
 
 pub use device::*;

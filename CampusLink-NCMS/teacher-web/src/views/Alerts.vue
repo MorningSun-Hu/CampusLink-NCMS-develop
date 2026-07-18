@@ -11,6 +11,8 @@
           <el-select v-model="inspectionFilter.type" placeholder="检查类型" clearable @change="loadInspections">
             <el-option label="卫生检查" value="hygiene" />
             <el-option label="设备检查" value="equipment" />
+            <el-option label="键盘检查" value="keyboard" />
+            <el-option label="鼠标检查" value="mouse" />
           </el-select>
         </div>
         <el-table :data="inspections" v-loading="inspLoading" border stripe>
@@ -215,7 +217,48 @@ function inspectionTypeLabel(type: string) {
   const map: Record<string, string> = {
     hygiene: '卫生检查',
     equipment: '设备检查',
+    keyboard: '键盘检查',
+    mouse: '鼠标检查',
   }
+  return map[type] || type
+}
+
+async function compressImage(file: File, maxWidth = 1200, quality = 0.7): Promise<Blob> {
+  if (!file.type.startsWith('image/')) return file
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      let w = img.width, h = img.height
+      if (w > maxWidth) {
+        h = Math.round(h * maxWidth / w)
+        w = maxWidth
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, 0, 0, w, h)
+      canvas.toBlob((blob) => resolve(blob || file), file.type, quality)
+    }
+    img.onerror = () => resolve(file)
+    img.src = URL.createObjectURL(file)
+  })
+}
+
+async function customUpload(options: UploadRequestOptions) {
+  try {
+    const compressed = await compressImage(options.file as File)
+    const res = await uploadPhoto(new File([compressed], (options.file as File).name, { type: (options.file as File).type }))
+    if (res.code === 0) {
+      ElMessage.success('上传成功')
+      loadPhotos()
+    } else {
+      ElMessage.error(res.message || '上传失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('上传失败: ' + (e?.message || '未知错误'))
+  }
+}
   return map[type] || type
 }
 

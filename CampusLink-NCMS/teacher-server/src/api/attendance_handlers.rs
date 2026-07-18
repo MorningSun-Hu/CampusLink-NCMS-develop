@@ -1,4 +1,5 @@
 use axum::{extract::State, response::IntoResponse, Json};
+use axum::http::header;
 use serde::Deserialize;
 use tracing::{info, error};
 
@@ -82,4 +83,41 @@ pub async fn list_attendance_handler(
             Json(ApiResponse::error(500, "查询签到记录失败".to_string()))
         }
     }
+}
+
+pub async fn export_attendance_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match generate_attendance_csv(&state.pool).await {
+        Ok(data) => {
+            let headers = [
+                (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+                (header::CONTENT_DISPOSITION, "attachment; filename=\"attendance.csv\""),
+            ];
+            (headers, data).into_response()
+        }
+        Err(e) => {
+            error!("Export attendance failed: {}", e);
+            Json(ApiResponse::<()>::error(500, format!("导出失败: {}", e))).into_response()
+        }
+    }
+}
+
+async fn generate_attendance_csv(pool: &sqlx::SqlitePool) -> anyhow::Result<Vec<u8>> {
+    let records = attendance::list_attendance(pool, Some(10000)).await?;
+    let mut csv = String::from("ID,学生ID,设备ID,签到时间,签退时间,状态,备注,创建时间\n");
+    for r in records {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},{}\n",
+            r.id,
+            r.student_id.as_deref().unwrap_or(""),
+            r.device_id,
+            r.check_in_time,
+            r.check_out_time.as_deref().unwrap_or(""),
+            r.status,
+            r.remarks.as_deref().unwrap_or(""),
+            "", // created_at not in record
+        ));
+    }
+    Ok(csv.into_bytes())
 }
