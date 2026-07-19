@@ -8,7 +8,7 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 - 教师端服务：Rust + Axum + SQLx + SQLite
 - 教师端 Web：Vue 3 + TypeScript + Element Plus + Vite
 - 学生端 Agent：Rust + Tokio + WebSocket
-- 通信协议：当前 Windows 联调包使用 JSON over WebSocket，Protobuf 协议文件已预留
+- 通信协议：WebSocket 消息支持 JSON 与 Protobuf 双编码，AES256-GCM 端到端加密
 
 ## 二、当前开发进度
 
@@ -20,9 +20,12 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 | P3 | 学生端 Agent 注册与心跳 | 完成 | Windows 学生端可注册并进入心跳循环 |
 | P4 | 模式切换基础链路 | 完成 | REST API 与 WebSocket 广播链路已落地 |
 | P5 | WebSocket 心跳循环与锁屏框架 | 完成 | 30 秒心跳、断线重连、锁屏框架已落地 |
-| P6 | 签到与检查流程 | 完成 | API + 学生端 + 前端全链路已实现，待实机联调 |
-| P7 | 硬件快照、日志中心、进程守护与锁屏完善 | 完成 | 3 张新表、7 个 API、2 个学生端模块、2 个前端页面、锁屏全链路实现与联调修复 |
-| P8 | 部署与安全加固 | 待开始 | Windows 服务注册、安装器打包、域名/HTTPS、生产部署说明 |
+| P6 | 签到与检查流程 | 完成 | API + 学生端 + 前端全链路已实现 |
+| P7 | 硬件快照、日志中心、进程守护与锁屏完善 | 完成 | 3 张新表、7 个 API、2 个学生端模块、2 个前端页面 |
+| P8 | 部署与安全加固 | 完成 | Windows 服务、防火墙、安装器、HTTPS 证书、部署文档 |
+| P9 | 学生管理 + 锁屏完善 + 安全加固 | 完成 | CRUD、Excel 导入导出、超级密码、AES256 配置加密 |
+| P10 | 网络认证、设备发现、通信升级 | 完成 | JWT、UDP 发现、白名单、WS 加密、工单、Protobuf |
+| P11 | 全部缺口补齐 | 完成 | network_accounts、导出、调度前端、Dashboard、图片压缩、座位图、WebSocket 前端、Protobuf 编码、SQLCipher、检查类型 |
 
 ## 三、本轮 Windows 联调确认结果
 
@@ -139,6 +142,10 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `0009_create_hardware_snapshots.sql`
 - `0010_create_hardware_changes.sql`
 - `0011_create_process_guard_policies.sql`
+- `0012_create_admin_users.sql`
+- `0013_create_device_whitelist.sql`
+- `0014_create_repair_orders.sql`
+- `0015_create_network_accounts.sql`
 
 ### 2. 教师端服务
 
@@ -168,6 +175,11 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `GET /api/policies/process-guard`：查询进程守护策略列表
 - `DELETE /api/policies/process-guard/:id`：删除进程守护策略
 - `/ws`：WebSocket 实时通信入口
+- `GET /api/attendance/export`：签到记录 CSV 导出
+- `GET /api/inspection/export`：检查记录 CSV 导出
+- `GET /api/settings/schedule`：查询定时模式切换配置
+- `PUT /api/settings/schedule`：更新定时模式切换配置
+- `POST/GET/PUT/DELETE /api/network-accounts`：网络认证账号管理
 - 自动创建 SQLite 数据库文件
 - 启动时自动执行数据库迁移
 - 接收学生端心跳并返回 `heartbeat_ack`
