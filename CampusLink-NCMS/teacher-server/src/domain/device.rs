@@ -24,6 +24,7 @@ pub struct DeviceRow {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceResponse {
     pub id: String,
     pub device_code: String,
@@ -68,6 +69,11 @@ pub struct ModeSwitchResponse {
 }
 
 pub async fn register_device(pool: &SqlitePool, device_code: &str, machine_fingerprint: &str, hostname: &str, ip_address: &str, mac_address: &str, agent_version: &str) -> Result<(String, String, String, u32)> {
+    // Whitelist check
+    if !check_whitelist(pool, device_code).await? {
+        return Err(anyhow::anyhow!("设备 {} 未在白名单中", device_code));
+    }
+
     let device_id = Uuid::new_v4().to_string();
     let device_name = hostname.to_string();
     
@@ -76,7 +82,7 @@ pub async fn register_device(pool: &SqlitePool, device_code: &str, machine_finge
         INSERT INTO student_devices 
         (id, device_code, device_name, machine_fingerprint, hostname, ip_address, mac_address, 
          register_status, online_status, current_mode, agent_version, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'offline', 'open', ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'verified', 'offline', 'open', ?, datetime('now'), datetime('now'))
         ON CONFLICT(device_code) DO UPDATE SET
             last_seen_at = datetime('now'),
             updated_at = datetime('now')
@@ -120,6 +126,18 @@ pub async fn update_heartbeat(pool: &SqlitePool, device_id: &str) -> Result<()> 
     Ok(())
 }
 
+pub async fn update_device_mode(pool: &SqlitePool, device_id: &str, mode: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    .bind(mode)
+    .bind(device_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn switch_device_mode(pool: &SqlitePool, device_id: &str, target_mode: &str, operator_name: &str) -> Result<String> {
     let command_id = Uuid::new_v4().to_string();
 
@@ -143,4 +161,77 @@ pub async fn switch_device_mode(pool: &SqlitePool, device_id: &str, target_mode:
     .await?;
 
     Ok(command_id)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct WhitelistEntry {
+    pub id: String,
+    pub device_code: String,
+    pub device_name: String,
+    pub mac_address: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+pub async fn check_whitelist(pool: &SqlitePool, device_code: &str) -> Result<bool> {
+    let policy: Option<String> = sqlx::query_scalar(
+        "SELECT config_value FROM system_configs WHERE config_key = 'device_register_policy'"
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+
+    if policy.as_deref() != Some("whitelist_required") {
+        return Ok(true);
+    }
+
+    let exists: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM device_whitelist WHERE device_code = ? AND status = 'approved'"
+    )
+    .bind(device_code)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(exists.is_some())
+}
+
+pub async fn list_whitelist(pool: &SqlitePool) -> Result<Vec<WhitelistEntry>> {
+    let entries = sqlx::query_as::<_, WhitelistEntry>(
+        "SELECT * FROM device_whitelist ORDER BY created_at DESC"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(entries)
+}
+
+pub async fn import_whitelist(pool: &SqlitePool, device_code: &str, device_name: &str, mac_address: &str) -> Result<()> {
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT OR REPLACE INTO device_whitelist (id, device_code, device_name, mac_address, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))"
+    )
+    .bind(&id)
+    .bind(device_code)
+    .bind(device_name)
+    .bind(mac_address)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn approve_whitelist(pool: &SqlitePool, id: &str) -> Result<()> {
+    sqlx::query("UPDATE device_whitelist SET status = 'approved', updated_at = datetime('now') WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_whitelist(pool: &SqlitePool, id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM device_whitelist WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }

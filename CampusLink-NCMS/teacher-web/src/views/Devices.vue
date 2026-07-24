@@ -38,9 +38,11 @@
           {{ row.lastSeenAt || '-' }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="150">
+      <el-table-column label="操作" width="250">
         <template #default="{ row }">
           <el-button type="primary" size="small" @click="showModeSwitchDialog(row)">切换模式</el-button>
+          <el-button type="warning" size="small" @click="handleLock(row)">锁屏</el-button>
+          <el-button type="success" size="small" @click="handleUnlock(row)">解锁</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -71,7 +73,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { listDevices, switchDeviceMode, type Device } from '@/api/devices'
+import { listDevices, switchDeviceMode, lockDevice, unlockDevice, type Device } from '@/api/devices'
 import { ElMessage } from 'element-plus'
 
 const devices = ref<Device[]>([])
@@ -146,6 +148,26 @@ const formatMode = (mode: string) => {
     conditional_open: '条件开放',
   }
   return names[mode] || mode
+}
+
+const handleLock = async (device: Device) => {
+  try {
+    await lockDevice(device.id, '教师远程锁定')
+    ElMessage.success('锁屏命令已发送')
+  } catch (error) {
+    console.error('Lock failed:', error)
+    ElMessage.error('锁屏命令发送失败')
+  }
+}
+
+const handleUnlock = async (device: Device) => {
+  try {
+    await unlockDevice(device.id)
+    ElMessage.success('解锁命令已发送')
+  } catch (error) {
+    console.error('Unlock failed:', error)
+    ElMessage.error('解锁命令发送失败')
+  }
 }
 
 onMounted(() => {

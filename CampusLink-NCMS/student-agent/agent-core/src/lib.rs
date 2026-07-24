@@ -1,9 +1,16 @@
 pub mod config;
+pub mod crypto;
 pub mod register;
+pub mod discovery;
 pub mod heartbeat;
 pub mod mode;
 pub mod websocket;
 pub mod command_handler;
+pub mod attendance;
+pub mod inspection;
+pub mod student_auth;
+pub mod hardware;
+pub mod process_guard;
 
 pub use config::Config;
 pub use register::*;

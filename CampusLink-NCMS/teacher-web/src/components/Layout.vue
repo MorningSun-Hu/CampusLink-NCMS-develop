@@ -3,23 +3,68 @@
     <el-container>
       <el-aside width="220px">
         <div class="logo">CampusLink</div>
-        <el-menu
-          :default-active="activeMenu"
-          background-color="#1a1a2e"
-          text-color="#b8b8d0"
-          active-text-color="#409EFF"
-          router
-        >
-          <el-menu-item index="/dashboard">
-            <span>仪表盘</span>
-          </el-menu-item>
-          <el-menu-item index="/devices">
-            <span>设备管理</span>
-          </el-menu-item>
-          <el-menu-item index="/monitor">
-            <span>监控总览</span>
-          </el-menu-item>
-        </el-menu>
+        <div class="sidebar-menu">
+          <router-link to="/dashboard" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>仪表盘</span>
+            </div>
+          </router-link>
+          <router-link to="/devices" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>设备管理</span>
+            </div>
+          </router-link>
+          <router-link to="/monitor" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>监控总览</span>
+            </div>
+          </router-link>
+          <router-link to="/attendance" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>签到管理</span>
+            </div>
+          </router-link>
+          <router-link to="/alerts" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>检查告警</span>
+            </div>
+          </router-link>
+          <router-link to="/hardware" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>硬件快照</span>
+            </div>
+          </router-link>
+          <router-link to="/logs" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>日志中心</span>
+            </div>
+          </router-link>
+          <router-link to="/students" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>学生管理</span>
+            </div>
+          </router-link>
+          <router-link to="/settings" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>系统设置</span>
+            </div>
+          </router-link>
+          <router-link to="/repairs" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>维修工单</span>
+            </div>
+          </router-link>
+          <router-link to="/device-whitelist" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>设备白名单</span>
+            </div>
+          </router-link>
+          <router-link to="/network-accounts" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>网络认证</span>
+            </div>
+          </router-link>
+        </div>
       </el-aside>
       <el-container>
         <el-header>
@@ -37,11 +82,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { onMounted } from 'vue'
+import { useWebSocket } from '@/composables/useWebSocket'
 
-const route = useRoute()
-const activeMenu = computed(() => route.path as string)
+const { connect } = useWebSocket()
+
+onMounted(() => {
+  connect()
+})
 </script>
 
 <style scoped>
@@ -56,6 +104,31 @@ const activeMenu = computed(() => route.path as string)
 .el-aside {
   background-color: #1a1a2e;
   color: #fff;
+  overflow-y: auto;
+}
+
+.sidebar-menu {
+  padding: 8px 0;
+}
+
+.menu-item {
+  height: 56px;
+  line-height: 56px;
+  padding: 0 20px;
+  color: #b8b8d0;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+}
+
+.menu-item:hover {
+  color: #fff;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.menu-item.active {
+  color: #409EFF;
+  background-color: rgba(64, 158, 255, 0.1);
 }
 
 .logo {

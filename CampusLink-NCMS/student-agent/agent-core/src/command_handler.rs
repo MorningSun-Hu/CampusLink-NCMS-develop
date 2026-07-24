@@ -1,5 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::process::{Command, Stdio};
+use std::fs::File;
+use tokio::sync::mpsc;
 use tracing::{info, warn, error, debug};
 
 use crate::config::Config;
@@ -11,8 +14,12 @@ use crate::mode::handle_mode_switch;
 pub enum WebSocketCommand {
     /// 模式切换命令
     ModeSwitch {
+        #[serde(default)]
+        device_id: String,
         mode: String,
+        #[serde(default)]
         operator: String,
+        #[serde(default)]
         timestamp: u64,
     },
     /// 锁屏命令
@@ -22,6 +29,12 @@ pub enum WebSocketCommand {
     },
     /// 解锁命令
     Unlock {
+        timestamp: u64,
+    },
+    /// 超级密码更新
+    SuperPwd {
+        password: String,
+        #[serde(default)]
         timestamp: u64,
     },
     /// 心跳响应
@@ -37,12 +50,13 @@ pub enum WebSocketCommand {
 
 /// 命令处理器
 pub struct CommandHandler {
-    config: Config,
+    pub config: Config,
+    unlock_tx: Option<mpsc::UnboundedSender<String>>,
 }
 
 impl CommandHandler {
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new(config: Config, unlock_tx: Option<mpsc::UnboundedSender<String>>) -> Self {
+        Self { config, unlock_tx }
     }
 
     /// 处理 WebSocket 命令
@@ -62,25 +76,110 @@ impl CommandHandler {
         };
 
         match command {
-            WebSocketCommand::ModeSwitch { mode, operator, timestamp: _ } => {
+            WebSocketCommand::ModeSwitch { device_id, mode, operator, timestamp: _ } => {
+                // Only process commands targeting this device
+                if !device_id.is_empty() && device_id != self.config.device_id.as_deref().unwrap_or("") {
+                    debug!("Mode switch for different device {} ignored", device_id);
+                    return Ok(());
+                }
                 info!("Received mode switch command: mode={}, operator={}", mode, operator);
-                if let Err(e) = handle_mode_switch(&mut self.config, &mode).await {
+                if let Err(e) = handle_mode_switch(&mut self.config, &mode, &self.unlock_tx).await {
                     error!("Mode switch failed: {}", e);
                     return Err(e);
                 }
-                info!("Mode switch completed");
+                info!("Mode switch completed: now in {} mode", self.config.current_mode);
+                println!("\n[MODE SWITCHED] Now in {} mode\n", self.config.current_mode);
             }
             
             WebSocketCommand::LockScreen { reason, timestamp: _ } => {
                 info!("Received lock screen command: reason={}", reason);
-                // TODO: 调用 campus-lock 执行锁屏
-                warn!("Lock screen not yet implemented");
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+                let lock_exe = match &exe_dir {
+                    Some(dir) => dir.join("campus-lock.exe"),
+                    None => std::path::PathBuf::from("campus-lock.exe"),
+                };
+                if !lock_exe.exists() {
+                    error!("campus-lock.exe not found at: {:?}", lock_exe);
+                    println!("\n[LOCK FAILED] campus-lock.exe not found\n");
+                    return Ok(());
+                }
+                let password = self.config.lock_password.as_deref().unwrap_or("admin123");
+                let stderr_file = match File::create("campus-lock-stderr.log") {
+                    Ok(f) => f,
+                    Err(e) => {
+                        error!("Failed to create stderr log: {}", e);
+                        return Ok(());
+                    }
+                };
+                info!("Launching lock screen: {:?}", lock_exe);
+                match Command::new(&lock_exe)
+                    .arg(password)
+                    .stdin(Stdio::null())
+                    .stderr(Stdio::from(stderr_file))
+                    .spawn()
+                {
+                    Ok(mut child) => {
+                        info!("Spawn succeeded, PID={}", child.id());
+                        // Wait briefly to see if child crashes immediately
+                        std::thread::sleep(std::time::Duration::from_millis(800));
+                        match child.try_wait() {
+                            Ok(Some(status)) => {
+                                error!("campus-lock exited immediately with: {:?}", status);
+                                println!("\n[LOCK FAILED] campus-lock exited early: {:?} (check campus-lock-stderr.log)\n", status);
+                            }
+                            Ok(None) => {
+                                info!("campus-lock still running, lock screen active");
+                                self.config.lock_pid = Some(child.id());
+                                self.config.is_locked = true;
+                                println!("\n[SCREEN LOCKED] {}\n", reason);
+                            }
+                            Err(e) => {
+                                error!("Failed to check child status: {}", e);
+                                self.config.lock_pid = Some(child.id());
+                                self.config.is_locked = true;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to start lock screen: {}", e);
+                        println!("\n[LOCK FAILED] Cannot start {:?}: {}\n", lock_exe, e);
+                    }
+                }
             }
             
             WebSocketCommand::Unlock { timestamp: _ } => {
                 info!("Received unlock command");
-                // TODO: 调用 campus-lock 执行解锁
-                warn!("Unlock not yet implemented");
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/IM", "campus-lock.exe", "/F"])
+                        .spawn();
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    if let Some(pid) = self.config.lock_pid.take() {
+                        let _ = std::process::Command::new("kill")
+                            .arg(pid.to_string())
+                            .spawn();
+                    }
+                }
+                self.config.is_locked = false;
+                self.config.lock_pid = None;
+                info!("Lock screen process terminated");
+                println!("\n[SCREEN UNLOCKED]\n");
+            }
+            
+            WebSocketCommand::SuperPwd { password, timestamp: _ } => {
+                info!("Received super password update");
+                self.config.lock_password = Some(password.clone());
+                if let Err(e) = self.config.save() {
+                    error!("Failed to save updated lock password: {}", e);
+                } else {
+                    info!("Lock password updated successfully");
+                    println!("\n[PASSWORD UPDATED] Lock password has been changed\n");
+                }
             }
             
             WebSocketCommand::HeartbeatAck { ack_code, message } => {
@@ -103,4 +202,6 @@ pub struct HeartbeatRequest {
     pub timestamp: u64,
     pub status: String,
     pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub teacher_fingerprint: Option<String>,
 }

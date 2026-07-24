@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use tracing::info;
+
+use crate::crypto;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -7,6 +10,17 @@ pub struct Config {
     pub teacher_fingerprint: Option<String>,
     pub current_mode: String,
     pub heartbeat_interval_seconds: u64,
+    pub student_id: Option<String>,
+    pub student_no: Option<String>,
+    pub student_name: Option<String>,
+    pub auth_token: Option<String>,
+    pub token_expires_at: Option<String>,
+    pub lock_password: Option<String>,
+    pub session_key: Option<String>,
+    #[serde(skip)]
+    pub is_locked: bool,
+    #[serde(skip)]
+    pub lock_pid: Option<u32>,
 }
 
 impl Config {
@@ -17,25 +31,41 @@ impl Config {
             teacher_fingerprint: None,
             current_mode: "open".to_string(),
             heartbeat_interval_seconds: 15,
+            student_id: None,
+            student_no: None,
+            student_name: None,
+            auth_token: None,
+            token_expires_at: None,
+            lock_password: Some("admin123".to_string()),
+            session_key: None,
+            is_locked: false,
+            lock_pid: None,
         }
     }
 
     pub fn load() -> anyhow::Result<Self> {
-        let config_path = "config/config.json";
-        if let Ok(content) = std::fs::read_to_string(config_path) {
-            let config: Config = serde_json::from_str(&content)?;
-            Ok(config)
-        } else {
-            let config = Config::default();
-            config.save()?;
-            Ok(config)
+        let password = std::env::var("LOCK_PASSWORD")
+            .unwrap_or_else(|_| "admin123".to_string());
+
+        match crypto::load_encrypted(&password) {
+            Ok(content) => {
+                info!("Configuration loaded (encrypted)");
+                let config: Config = serde_json::from_str(&content)?;
+                Ok(config)
+            }
+            Err(_) => {
+                let config = Config::default();
+                let json = serde_json::to_string_pretty(&config)?;
+                let _ = crypto::save_encrypted(&json, &password);
+                Ok(config)
+            }
         }
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::create_dir_all("config")?;
-        std::fs::write("config/config.json", content)?;
+        let password = self.lock_password.as_ref().map(|s| s.as_str()).unwrap_or("admin123");
+        crypto::save_encrypted(&content, password).map_err(|e| anyhow::anyhow!("{}", e))?;
         Ok(())
     }
 }
