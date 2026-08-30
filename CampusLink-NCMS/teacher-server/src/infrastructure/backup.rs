@@ -3,10 +3,10 @@ use tracing::{info, warn, error};
 use chrono::Local;
 use tokio::time::{self, Duration, MissedTickBehavior};
 
-pub fn start() {
+pub fn start(database_url: String) {
     tokio::spawn(async move {
         // Run initial backup on startup
-        if let Err(e) = perform_backup().await {
+        if let Err(e) = perform_backup(&database_url).await {
             error!("Initial backup failed: {}", e);
         }
         cleanup_old_backups();
@@ -16,7 +16,7 @@ pub fn start() {
 
         loop {
             ticker.tick().await;
-            if let Err(e) = perform_backup().await {
+            if let Err(e) = perform_backup(&database_url).await {
                 error!("Scheduled backup failed: {}", e);
             }
             cleanup_old_backups();
@@ -24,13 +24,34 @@ pub fn start() {
     });
 }
 
-async fn perform_backup() -> Result<(), Box<dyn std::error::Error>> {
+/// Resolve the on-disk sqlite file path from a database URL (sqlite:///path or sqlite:path).
+/// Returns None for in-memory databases.
+fn resolve_db_file_path(database_url: &str) -> Option<String> {
+    let path = database_url
+        .strip_prefix("sqlite:///")
+        .or_else(|| database_url.strip_prefix("sqlite://"))
+        .or_else(|| database_url.strip_prefix("sqlite:"));
+    let path = path?;
+    if path == ":memory:" {
+        return None;
+    }
+    Some(path.to_string())
+}
+
+async fn perform_backup(database_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let source = match resolve_db_file_path(database_url) {
+        Some(p) => p,
+        None => {
+            warn!("Skipping backup for in-memory database");
+            return Ok(());
+        }
+    };
+
     let today = Local::now().format("%Y-%m-%d").to_string();
     let backup_dir = format!("data/backup/{}", today);
-    let source = "data/campuslink.db";
     let dest = format!("{}/campuslink.db", backup_dir);
 
-    if !Path::new(source).exists() {
+    if !Path::new(&source).exists() {
         warn!("Source database not found: {}", source);
         return Ok(());
     }
@@ -43,7 +64,7 @@ async fn perform_backup() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&backup_dir)
         .map_err(|e| format!("Failed to create backup dir {}: {}", backup_dir, e))?;
 
-    std::fs::copy(source, &dest)
+    std::fs::copy(&source, &dest)
         .map_err(|e| format!("Failed to copy database: {}", e))?;
 
     info!("Database backup created: {}", dest);

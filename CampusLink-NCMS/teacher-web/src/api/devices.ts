@@ -1,6 +1,8 @@
 import api from './http'
 import type { ApiResponse, RegisterDeviceRequest, RegisterDeviceResponse, Device } from './types'
 
+export type { Device } from './types'
+
 export async function registerDevice(data: RegisterDeviceRequest) {
   const response = await api.post<ApiResponse<RegisterDeviceResponse>>('/devices/register', data)
   return response.data

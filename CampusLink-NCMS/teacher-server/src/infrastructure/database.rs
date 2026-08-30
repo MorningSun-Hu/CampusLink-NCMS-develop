@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
-use std::{path::{Path, PathBuf}, str::FromStr};
+use sqlx::{sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions}, SqlitePool};
+use std::{path::{Path, PathBuf}, str::FromStr, time::Duration};
 use tracing::info;
 
 pub async fn create_sqlite_pool(database_url: &str) -> Result<SqlitePool> {
@@ -8,7 +8,11 @@ pub async fn create_sqlite_pool(database_url: &str) -> Result<SqlitePool> {
     ensure_sqlite_parent_dir(&resolved_url)?;
 
     let mut options = SqliteConnectOptions::from_str(&resolved_url)?
-        .create_if_missing(true);
+        .create_if_missing(true)
+        // Wait up to 5s for a busy writer before returning SQLITE_BUSY
+        .busy_timeout(Duration::from_millis(5000))
+        // Enable WAL so concurrent readers/writers don't block each other
+        .journal_mode(SqliteJournalMode::Wal);
 
     #[cfg(feature = "sqlcipher")]
     {

@@ -219,3 +219,78 @@ pub async fn resolve_alert(pool: &SqlitePool, alert_id: &str, new_status: &str, 
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::test_support::{setup_pool, register_test_device};
+
+    fn item(name: &str, status: &str) -> InspectionItem {
+        InspectionItem {
+            item_name: name.to_string(),
+            status: status.to_string(),
+            description: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn submit_inspection_creates_records_and_counts() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-IN-001").await;
+
+        let items = vec![
+            item("keyboard", "normal"),
+            item("mouse", "abnormal"),
+            item("monitor", "missing"),
+        ];
+        let resp = submit_inspection(&pool, &device_id, "hygiene", &items, false).await.unwrap();
+
+        assert_eq!(resp.total_items, 3);
+        assert_eq!(resp.abnormal_count, 2);
+        assert_eq!(resp.record_ids.len(), 3);
+
+        let records = list_inspections(&pool, Some("hygiene"), None).await.unwrap();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].device_id, device_id);
+    }
+
+    #[tokio::test]
+    async fn is_abnormal_flag_marks_all_abnormal() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-IN-002").await;
+
+        let items = vec![item("desk", "normal")];
+        let resp = submit_inspection(&pool, &device_id, "check", &items, true).await.unwrap();
+
+        assert_eq!(resp.abnormal_count, 1);
+    }
+
+    #[tokio::test]
+    async fn list_alerts_filters_abnormal_only() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-IN-003").await;
+
+        let items = vec![item("keyboard", "abnormal")];
+        submit_inspection(&pool, &device_id, "hygiene", &items, false).await.unwrap();
+
+        let alerts = list_alerts(&pool, Some("all"), None).await.unwrap();
+        assert_eq!(alerts.alerts.len(), 1);
+        assert_eq!(alerts.alerts[0].item_name, "keyboard");
+    }
+
+    #[tokio::test]
+    async fn resolve_alert_updates_status() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-IN-004").await;
+
+        let items = vec![item("mouse", "abnormal")];
+        let resp = submit_inspection(&pool, &device_id, "hygiene", &items, false).await.unwrap();
+        let alert_id = &resp.record_ids[0];
+
+        resolve_alert(&pool, alert_id, "resolved", Some("fixed")).await.unwrap();
+
+        let records = list_inspections(&pool, None, None).await.unwrap();
+        assert_eq!(records[0].status, "resolved");
+        assert!(records[0].description.as_deref().unwrap_or("").contains("fixed"));
+    }
+}

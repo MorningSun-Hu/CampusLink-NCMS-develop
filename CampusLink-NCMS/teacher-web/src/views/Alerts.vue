@@ -193,20 +193,6 @@ async function handleResolve(row: AlertRecord) {
   }
 }
 
-async function customUpload(options: UploadRequestOptions) {
-  try {
-    const res = await uploadPhoto(options.file as File)
-    if (res.code === 0) {
-      ElMessage.success('上传成功')
-      loadPhotos()
-    } else {
-      ElMessage.error(res.message || '上传失败')
-    }
-  } catch (e: any) {
-    ElMessage.error('上传失败: ' + (e?.message || '未知错误'))
-  }
-}
-
 function loadData() {
   loadInspections()
   loadAlerts()
@@ -258,8 +244,6 @@ async function customUpload(options: UploadRequestOptions) {
   } catch (e: any) {
     ElMessage.error('上传失败: ' + (e?.message || '未知错误'))
   }
-}
-  return map[type] || type
 }
 
 function formatFileSize(bytes: number) {

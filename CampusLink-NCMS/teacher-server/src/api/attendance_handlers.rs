@@ -32,6 +32,11 @@ pub async fn check_in_handler(
     Json(req): Json<CheckInRequest>,
 ) -> impl IntoResponse {
     info!("Check-in request: device_id={}", req.device_id);
+
+    if !crate::domain::device::device_exists(&state.pool, &req.device_id).await.unwrap_or(false) {
+        return Json(ApiResponse::error(401, "设备未注册，请先注册".to_string()));
+    }
+
     match attendance::check_in(&state.pool, &req.device_id, req.student_id.as_deref(), req.timestamp).await {
         Ok(response) => Json(ApiResponse::success(response)),
         Err(e) => {

@@ -43,6 +43,11 @@ pub async fn submit_inspection_handler(
     Json(req): Json<InspectionSubmitRequest>,
 ) -> impl IntoResponse {
     info!("Inspection submit: device_id={}, type={}", req.device_id, req.inspection_type);
+
+    if !crate::domain::device::device_exists(&state.pool, &req.device_id).await.unwrap_or(false) {
+        return Json(ApiResponse::error(401, "设备未注册，请先注册".to_string()));
+    }
+
     let domain_items: Vec<DomainInspectionItem> = req.items.into_iter().map(|i| DomainInspectionItem {
         item_name: i.item_name,
         status: i.status,

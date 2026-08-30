@@ -115,6 +115,17 @@ pub async fn list_devices(pool: &SqlitePool) -> Result<Vec<DeviceResponse>> {
     Ok(rows.into_iter().map(|r| r.into()).collect())
 }
 
+pub async fn device_exists(pool: &SqlitePool, device_id: &str) -> Result<bool> {
+    let id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM student_devices WHERE id = ?"
+    )
+    .bind(device_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(id.is_some())
+}
+
 pub async fn update_heartbeat(pool: &SqlitePool, device_id: &str) -> Result<()> {
     sqlx::query(
         "UPDATE student_devices SET last_seen_at = datetime('now'), online_status = 'online', updated_at = datetime('now') WHERE id = ?"
@@ -234,4 +245,80 @@ pub async fn delete_whitelist(pool: &SqlitePool, id: &str) -> Result<()> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::test_support::setup_pool;
+
+    #[tokio::test]
+    async fn device_exists_returns_true_for_registered_device() {
+        let pool = setup_pool().await;
+        let (device_id, _, _, _) = register_device(
+            &pool,
+            "DEV-REG-001",
+            "fp-reg-001",
+            "host-reg-001",
+            "192.168.1.10",
+            "aa:bb:cc",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+
+        assert!(device_exists(&pool, &device_id).await.unwrap());
+        assert!(!device_exists(&pool, "nonexistent-id").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn register_device_returns_meta() {
+        let pool = setup_pool().await;
+        let (device_id, fingerprint, initial_mode, hb) = register_device(
+            &pool,
+            "DEV-REG-002",
+            "fp-reg-002",
+            "host-reg-002",
+            "192.168.1.11",
+            "dd:ee:ff",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+
+        assert!(!device_id.is_empty());
+        assert_eq!(fingerprint, "pending_init");
+        assert_eq!(initial_mode, "open");
+        assert!(hb > 0);
+    }
+
+    #[tokio::test]
+    async fn whitelist_default_policy_allows_all() {
+        let pool = setup_pool().await;
+        assert!(check_whitelist(&pool, "ANY-DEVICE").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn whitelist_required_blocks_unapproved() {
+        let pool = setup_pool().await;
+        sqlx::query(
+            r#"UPDATE system_configs SET config_value = 'whitelist_required'
+               WHERE config_key = 'device_register_policy'"#
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(!check_whitelist(&pool, "NOT-APPROVED").await.unwrap());
+
+        import_whitelist(&pool, "NOT-APPROVED", "name", "mac1").await.unwrap();
+        assert!(!check_whitelist(&pool, "NOT-APPROVED").await.unwrap());
+
+        let entries = list_whitelist(&pool).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        let id = entries[0].id.clone();
+        approve_whitelist(&pool, &id).await.unwrap();
+
+        assert!(check_whitelist(&pool, "NOT-APPROVED").await.unwrap());
+    }
 }

@@ -169,10 +169,11 @@ async fn detect_changes(pool: &SqlitePool, device_id: &str, prev: &HardwareSnaps
 
             let log_id = Uuid::new_v4().to_string();
             sqlx::query(
-                r#"INSERT INTO operation_logs (id, log_type, device_id, action, detail, created_at)
-                   VALUES (?, 'alert', ?, 'hardware_change', ?, datetime('now'))"#
+                r#"INSERT INTO operation_logs (id, log_type, operator, target_id, content, extra_payload, created_at)
+                   VALUES (?, 'alert', ?, ?, ?, '{}', datetime('now'))"#
             )
             .bind(&log_id)
+            .bind(device_id)
             .bind(device_id)
             .bind(format!("{}: '{}' -> '{}'", field_name, old_str, new_str))
             .execute(pool)
@@ -214,4 +215,73 @@ pub async fn list_changes(pool: &SqlitePool, device_id: Option<&str>, limit: Opt
     };
 
     Ok(rows.into_iter().map(|r| r.into()).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::test_support::{setup_pool, register_test_device};
+
+    fn request(device_id: &str, cpu: Option<&str>) -> HardwareSnapshotSubmitRequest {
+        HardwareSnapshotSubmitRequest {
+            device_id: device_id.to_string(),
+            cpu_model: cpu.map(|s| s.to_string()),
+            cpu_cores: Some(4),
+            total_memory_bytes: Some(8_589_934_592),
+            disk_info: Some("512GB SSD".to_string()),
+            mac_addresses: Some("aa:bb:cc".to_string()),
+            gpu_info: None,
+            os_version: Some("Windows 11".to_string()),
+            hostname: Some("stu-pc".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn submit_snapshot_persists_row() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-HW-001").await;
+
+        let snap = submit_snapshot(&pool, &request(&device_id, Some("i7-12700"))).await.unwrap();
+        assert_eq!(snap.device_id, device_id);
+        assert_eq!(snap.cpu_model.as_deref(), Some("i7-12700"));
+
+        let fetched = get_snapshot(&pool, &device_id).await.unwrap().unwrap();
+        assert_eq!(fetched.cpu_model.as_deref(), Some("i7-12700"));
+    }
+
+    #[tokio::test]
+    async fn changed_cpu_detects_hardware_change() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-HW-002").await;
+
+        submit_snapshot(&pool, &request(&device_id, Some("i5-10400"))).await.unwrap();
+        submit_snapshot(&pool, &request(&device_id, Some("i7-12700"))).await.unwrap();
+
+        let changes = list_changes(&pool, Some(&device_id), None).await.unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].field_name, "cpu_model");
+        assert_eq!(changes[0].old_value.as_deref(), Some("i5-10400"));
+        assert_eq!(changes[0].new_value.as_deref(), Some("i7-12700"));
+
+        let snapshots: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM hardware_snapshots WHERE device_id = ?"
+        )
+        .bind(&device_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(snapshots.0, 2);
+    }
+
+    #[tokio::test]
+    async fn unchanged_snapshot_creates_no_change_record() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-HW-003").await;
+
+        submit_snapshot(&pool, &request(&device_id, Some("i5-10400"))).await.unwrap();
+        submit_snapshot(&pool, &request(&device_id, Some("i5-10400"))).await.unwrap();
+
+        let changes = list_changes(&pool, Some(&device_id), None).await.unwrap();
+        assert!(changes.is_empty());
+    }
 }

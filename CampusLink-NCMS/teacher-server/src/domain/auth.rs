@@ -75,8 +75,11 @@ pub async fn login(pool: &SqlitePool, req: &LoginRequest) -> Result<LoginRespons
 
     let user = user.ok_or_else(|| anyhow::anyhow!("用户名或密码错误"))?;
 
-    bcrypt::verify(&req.password, &user.password_hash)
+    let verified = bcrypt::verify(&req.password, &user.password_hash)
         .map_err(|_| anyhow::anyhow!("用户名或密码错误"))?;
+    if !verified {
+        return Err(anyhow::anyhow!("用户名或密码错误"));
+    }
 
     let now = Utc::now();
     let exp = now + chrono::Duration::hours(8);
@@ -141,4 +144,76 @@ async fn get_jwt_secret(pool: &SqlitePool) -> Result<String> {
     .await?;
 
     Ok(secret)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::test_support::setup_pool;
+
+    #[tokio::test]
+    async fn login_issues_token_and_verify_passes() {
+        let pool = setup_pool().await;
+        init_default_admin(&pool).await.unwrap();
+
+        let resp = login(&pool, &LoginRequest {
+            username: "admin".to_string(),
+            password: "admin123".to_string(),
+        }).await.unwrap();
+
+        assert!(!resp.token.is_empty());
+        assert_eq!(resp.username, "admin");
+        assert_eq!(resp.role, "admin");
+        assert!(resp.expires_at > chrono::Utc::now().timestamp());
+
+        let claims = verify_token(&resp.token, &get_jwt_secret(&pool).await.unwrap()).unwrap();
+        assert_eq!(claims.username, "admin");
+        assert_eq!(claims.role, "admin");
+    }
+
+    #[tokio::test]
+    async fn login_rejects_wrong_password() {
+        let pool = setup_pool().await;
+        init_default_admin(&pool).await.unwrap();
+
+        let result = login(&pool, &LoginRequest {
+            username: "admin".to_string(),
+            password: "wrong-password".to_string(),
+        }).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn verify_token_rejects_wrong_secret() {
+        let pool = setup_pool().await;
+        init_default_admin(&pool).await.unwrap();
+        let resp = login(&pool, &LoginRequest {
+            username: "admin".to_string(),
+            password: "admin123".to_string(),
+        }).await.unwrap();
+
+        assert!(verify_token(&resp.token, "wrong-secret").is_err());
+    }
+
+    #[test]
+    fn token_expired_is_rejected() {
+        let secret = "test-secret";
+        let now = Utc::now();
+        let claims = Claims {
+            sub: "u1".to_string(),
+            username: "admin".to_string(),
+            role: "admin".to_string(),
+            iat: (now - chrono::Duration::hours(2)).timestamp() as usize,
+            exp: (now - chrono::Duration::hours(1)).timestamp() as usize,
+        };
+
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+        ).unwrap();
+
+        assert!(verify_token(&token, secret).is_err());
+    }
 }

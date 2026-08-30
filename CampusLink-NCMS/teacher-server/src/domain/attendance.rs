@@ -102,61 +102,59 @@ pub async fn check_in(pool: &SqlitePool, device_id: &str, student_id: Option<&st
 }
 
 pub async fn get_statistics(pool: &SqlitePool, date: Option<&str>) -> Result<AttendanceStatistics> {
-    let date_filter = date.unwrap_or("date('now')");
+    let total = count_by_status(pool, date, "total").await?;
+    let present = count_by_status(pool, date, "present").await?;
+    let late = count_by_status(pool, date, "late").await?;
+    let absent = count_by_status(pool, date, "absent").await?;
+    let leave = count_by_status(pool, date, "leave").await?;
 
-    let total: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date(?)"#
-    )
-    .bind(date_filter)
-    .fetch_one(pool)
-    .await?;
-
-    let present: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date(?) AND status = 'present'"#
-    )
-    .bind(date_filter)
-    .fetch_one(pool)
-    .await?;
-
-    let late: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date(?) AND status = 'late'"#
-    )
-    .bind(date_filter)
-    .fetch_one(pool)
-    .await?;
-
-    let absent: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date(?) AND status = 'absent'"#
-    )
-    .bind(date_filter)
-    .fetch_one(pool)
-    .await?;
-
-    let leave: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date(?) AND status = 'leave'"#
-    )
-    .bind(date_filter)
-    .fetch_one(pool)
-    .await?;
-
-    let records = sqlx::query_as::<_, AttendanceRow>(
-        r#"SELECT * FROM attendance_records WHERE date(check_in_time) = date(?) ORDER BY check_in_time DESC"#
-    )
-    .bind(date_filter)
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|r| r.into())
-    .collect();
+    let records = list_by_date(pool, date).await?;
 
     Ok(AttendanceStatistics {
-        total: total.0,
-        present: present.0,
-        late: late.0,
-        absent: absent.0,
-        leave: leave.0,
+        total,
+        present,
+        late,
+        absent,
+        leave,
         records,
     })
+}
+
+async fn count_by_status(pool: &SqlitePool, date: Option<&str>, status: &str) -> Result<i64> {
+    let sql = if status == "total" {
+        match date {
+            Some(_) => "SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date(?)".to_string(),
+            None => "SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date('now')".to_string(),
+        }
+    } else {
+        match date {
+            Some(_) => format!("SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date(?) AND status = '{}'", status),
+            None => format!("SELECT COUNT(*) as count FROM attendance_records WHERE date(check_in_time) = date('now') AND status = '{}'", status),
+        }
+    };
+
+    let count: (i64,) = if let Some(d) = date {
+        sqlx::query_as(&sql).bind(d).fetch_one(pool).await?
+    } else {
+        sqlx::query_as(&sql).fetch_one(pool).await?
+    };
+
+    Ok(count.0)
+}
+
+async fn list_by_date(pool: &SqlitePool, date: Option<&str>) -> Result<Vec<AttendanceRecord>> {
+    let sql = match date {
+        Some(_) => "SELECT * FROM attendance_records WHERE date(check_in_time) = date(?) ORDER BY check_in_time DESC".to_string(),
+        None => "SELECT * FROM attendance_records WHERE date(check_in_time) = date('now') ORDER BY check_in_time DESC".to_string(),
+    };
+
+    let rows = if let Some(d) = date {
+        sqlx::query_as::<_, AttendanceRow>(&sql).bind(d).fetch_all(pool).await?
+    } else {
+        sqlx::query_as::<_, AttendanceRow>(&sql).fetch_all(pool).await?
+    };
+
+    Ok(rows.into_iter().map(|r| r.into()).collect())
 }
 
 pub async fn retroactive_check_in(pool: &SqlitePool, student_id: &str, device_id: &str, check_in_time: &str, remarks: Option<&str>) -> Result<CheckInResponse> {
@@ -190,4 +188,77 @@ pub async fn list_attendance(pool: &SqlitePool, limit: Option<i64>) -> Result<Ve
     .await?;
 
     Ok(rows.into_iter().map(|r| r.into()).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::test_support::{setup_pool, register_test_device, create_test_student};
+
+    #[tokio::test]
+    async fn check_in_creates_present_record() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-TEST-001").await;
+        let student_id = create_test_student(&pool, "STU-001").await;
+
+        let resp = check_in(&pool, &device_id, Some(&student_id), Some(1_700_000_000)).await.unwrap();
+        assert_eq!(resp.status, "present");
+
+        let records = list_attendance(&pool, None).await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].device_id, device_id);
+        assert_eq!(records[0].student_id.as_deref(), Some(student_id.as_str()));
+        assert_eq!(records[0].status, "present");
+    }
+
+    #[tokio::test]
+    async fn check_in_defaults_to_now_when_no_timestamp() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-TEST-002").await;
+
+        let resp = check_in(&pool, &device_id, None, None).await.unwrap();
+        assert_eq!(resp.status, "present");
+
+        let records = list_attendance(&pool, None).await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].student_id, None);
+    }
+
+    #[tokio::test]
+    async fn get_statistics_counts_by_status() {
+        let pool = setup_pool().await;
+        let d1 = register_test_device(&pool, "DEV-TEST-003").await;
+        let d2 = register_test_device(&pool, "DEV-TEST-004").await;
+
+        check_in(&pool, &d1, None, None).await.unwrap();
+        check_in(&pool, &d2, None, None).await.unwrap();
+
+        sqlx::query(
+            "UPDATE attendance_records SET status = 'late' WHERE device_id = ?"
+        )
+        .bind(&d2)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let stats = get_statistics(&pool, None).await.unwrap();
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.present, 1);
+        assert_eq!(stats.late, 1);
+    }
+
+    #[tokio::test]
+    async fn retroactive_check_in_inserts_with_remarks() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-TEST-005").await;
+        let student_id = create_test_student(&pool, "STU-005").await;
+
+        let resp = retroactive_check_in(&pool, &student_id, &device_id, "2026-08-28 09:00:00", Some("补签")).await.unwrap();
+        assert_eq!(resp.status, "present");
+
+        let records = list_attendance(&pool, None).await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].remarks.as_deref(), Some("补签"));
+        assert_eq!(records[0].check_in_time, "2026-08-28 09:00:00");
+    }
 }

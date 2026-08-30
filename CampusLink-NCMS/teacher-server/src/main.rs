@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     info!("Database migrations applied");
 
-    let app = create_app(&pool).await;
+    let app = create_app(&pool, config.database.url.clone()).await;
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting server on {}", addr);

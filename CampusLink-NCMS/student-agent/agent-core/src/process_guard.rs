@@ -22,7 +22,7 @@ struct ApiResponse<T> {
 
 pub async fn sync_policies(config: &Config) -> Vec<ProcessGuardPolicy> {
     let client = reqwest::Client::new();
-    let url = format!("{}/api/policies/process-guard", config.teacher_server_url);
+    let url = format!("{}/api/policies/process-guard/sync", config.teacher_server_url);
 
     let device_id = config.device_id.clone().unwrap_or_default();
     let full_url = format!("{}?device_id={}", url, device_id);

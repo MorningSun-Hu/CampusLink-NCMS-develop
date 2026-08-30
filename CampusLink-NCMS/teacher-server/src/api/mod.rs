@@ -35,7 +35,7 @@ use repair_handlers::{create_repair_handler, list_repairs_handler, update_repair
 use network_account_handlers::{list_accounts_handler, create_account_handler, update_account_handler, delete_account_handler};
 use crate::middleware::auth::auth_middleware;
 
-pub async fn create_app(pool: &SqlitePool) -> Router {
+pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
     let (ws_tx, _) = broadcast::channel(100);
 
     // Generate or load JWT secret
@@ -75,7 +75,7 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
     crate::scheduler::start(pool.clone(), ws_tx);
 
     // Start database backup
-    crate::infrastructure::backup::start();
+    crate::infrastructure::backup::start(database_url);
 
     // Start UDP discovery listener
     crate::discovery::start(8080);
@@ -85,6 +85,11 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
         .route("/api/health", get(health_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/devices/register", post(register_device_handler))
+        // Student agent report endpoints: authenticated by device_id (registered device)
+        .route("/api/attendance/check-in", post(check_in_handler))
+        .route("/api/inspection/submit", post(submit_inspection_handler))
+        .route("/api/hardware/snapshot", post(submit_snapshot_handler))
+        .route("/api/policies/process-guard/sync", get(list_policies_handler))
         .route("/ws", get(ws_handler));
 
     // Protected routes (auth required)
@@ -93,12 +98,10 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
         .route("/api/devices/:id/mode", post(mode_switch_handler))
         .route("/api/devices/:id/lock", post(lock_screen_handler))
         .route("/api/devices/:id/unlock", post(unlock_handler))
-        .route("/api/attendance/check-in", post(check_in_handler))
         .route("/api/attendance/statistics", get(statistics_handler))
         .route("/api/attendance/retroactive", post(retroactive_handler))
         .route("/api/attendance", get(list_attendance_handler))
         .route("/api/attendance/export", get(export_attendance_handler))
-        .route("/api/inspection/submit", post(submit_inspection_handler))
         .route("/api/inspection", get(list_inspections_handler))
         .route("/api/inspection/export", get(export_inspection_handler))
         .route("/api/alerts", get(list_alerts_handler))
@@ -106,7 +109,6 @@ pub async fn create_app(pool: &SqlitePool) -> Router {
         .route("/api/photos/upload", post(upload_photo_handler))
         .route("/api/photos/:id", get(get_photo_handler))
         .route("/api/photos", get(list_photos_handler))
-        .route("/api/hardware/snapshot", post(submit_snapshot_handler))
         .route("/api/hardware/snapshot", get(get_snapshot_handler))
         .route("/api/hardware/changes", get(list_changes_handler))
         .route("/api/logs", get(query_logs_handler))

@@ -17,6 +17,11 @@ pub async fn submit_snapshot_handler(
     Json(req): Json<hardware::HardwareSnapshotSubmitRequest>,
 ) -> impl IntoResponse {
     info!("Hardware snapshot submit for device={}", req.device_id);
+
+    if !crate::domain::device::device_exists(&state.pool, &req.device_id).await.unwrap_or(false) {
+        return Json(ApiResponse::error(401, "设备未注册，请先注册".to_string()));
+    }
+
     match hardware::submit_snapshot(&state.pool, &req).await {
         Ok(snapshot) => Json(ApiResponse::success(snapshot)),
         Err(e) => {

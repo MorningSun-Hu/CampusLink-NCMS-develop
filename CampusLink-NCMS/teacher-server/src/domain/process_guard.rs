@@ -152,3 +152,96 @@ pub async fn delete_policy(pool: &SqlitePool, id: &str) -> Result<bool> {
 
     Ok(result.rows_affected() > 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::test_support::{setup_pool, register_test_device};
+
+    #[tokio::test]
+    async fn create_and_list_policies_by_device() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-PG-001").await;
+
+        let global = create_policy(&pool, &CreatePolicyRequest {
+            device_id: None,
+            process_name: "chrome".to_string(),
+            check_interval_seconds: None,
+            max_restart_attempts: None,
+        }).await.unwrap();
+        let scoped = create_policy(&pool, &CreatePolicyRequest {
+            device_id: Some(device_id.clone()),
+            process_name: "agent".to_string(),
+            check_interval_seconds: Some(30),
+            max_restart_attempts: Some(5),
+        }).await.unwrap();
+
+        assert_eq!(global.check_interval_seconds, 60);
+        assert_eq!(global.max_restart_attempts, 3);
+        assert_eq!(scoped.check_interval_seconds, 30);
+        assert_eq!(scoped.max_restart_attempts, 5);
+
+        let for_device = list_policies(&pool, Some(&device_id)).await.unwrap();
+        assert_eq!(for_device.len(), 2);
+
+        let all = list_policies(&pool, None).await.unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn scoped_policy_not_visible_to_other_device() {
+        let pool = setup_pool().await;
+        let d1 = register_test_device(&pool, "DEV-PG-002").await;
+        let d2 = register_test_device(&pool, "DEV-PG-003").await;
+
+        create_policy(&pool, &CreatePolicyRequest {
+            device_id: Some(d1.clone()),
+            process_name: "scoped".to_string(),
+            check_interval_seconds: None,
+            max_restart_attempts: None,
+        }).await.unwrap();
+
+        let for_d2 = list_policies(&pool, Some(&d2)).await.unwrap();
+        assert_eq!(for_d2.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_policy_changes_fields() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-PG-004").await;
+
+        let policy = create_policy(&pool, &CreatePolicyRequest {
+            device_id: Some(device_id),
+            process_name: "app".to_string(),
+            check_interval_seconds: None,
+            max_restart_attempts: None,
+        }).await.unwrap();
+
+        let updated = update_policy(&pool, &policy.id, &UpdatePolicyRequest {
+            process_name: Some("newapp".to_string()),
+            check_interval_seconds: Some(10),
+            max_restart_attempts: None,
+            enabled: Some(false),
+        }).await.unwrap().unwrap();
+
+        assert_eq!(updated.process_name, "newapp");
+        assert_eq!(updated.check_interval_seconds, 10);
+        assert!(!updated.enabled);
+    }
+
+    #[tokio::test]
+    async fn delete_policy_returns_existence() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-PG-005").await;
+
+        let policy = create_policy(&pool, &CreatePolicyRequest {
+            device_id: Some(device_id),
+            process_name: "tmp".to_string(),
+            check_interval_seconds: None,
+            max_restart_attempts: None,
+        }).await.unwrap();
+
+        assert!(delete_policy(&pool, &policy.id).await.unwrap());
+        assert!(!delete_policy(&pool, &policy.id).await.unwrap());
+    }
+}

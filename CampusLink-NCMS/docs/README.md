@@ -40,9 +40,14 @@
 - `../WINDOWS-BUILD-SUMMARY.md`：Windows 发布包构建、联调修复与验证结果
 - `../dist/windows-release/README-windows.md`：Windows 发布包使用说明
 
+## 五、测试报告
+
+- `autotest-report.md`：后台自动构建、API 端到端功能验证、学生端实机与并发压测报告（最新，含修复记录 v1.1）
+
 ## 五、使用顺序
 
 1. 先读 `requirements-analysis.md`
 2. 再读 `development-summary.md`（了解当前进度）
-3. 再读 `development-task-breakdown.md`
-4. 开始新阶段开发时读对应执行基线文档
+3. 再读 `autotest-report.md`（了解真实功能状态与缺陷）
+4. 再读 `development-task-breakdown.md`
+5. 开始新阶段开发时读对应执行基线文档
