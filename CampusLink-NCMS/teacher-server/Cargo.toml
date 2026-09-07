@@ -33,6 +33,7 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 anyhow = "1.0"
+if-addrs = "0.15"
 
 # 加密
 bcrypt = "0.15"

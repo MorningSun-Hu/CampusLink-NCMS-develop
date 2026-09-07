@@ -16,8 +16,42 @@ pub fn start(pool: SqlitePool, ws_tx: broadcast::Sender<String>) {
             if let Err(e) = check_and_execute(&pool, &ws_tx).await {
                 error!("Scheduler execution failed: {}", e);
             }
+            if let Err(e) = mark_stale_offline(&pool).await {
+                error!("Stale device offline check failed: {}", e);
+            }
         }
     });
+}
+
+async fn mark_stale_offline(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
+    let heartbeat_interval: Option<u32> = sqlx::query_scalar(
+        "SELECT config_value FROM system_configs WHERE config_key = 'heartbeat_interval_seconds'"
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten()
+    .map(|v: String| v.parse().unwrap_or(15));
+
+    // Mark devices as offline when their heartbeat is stale for several intervals
+    // (default 15s heartbeat -> 3x = 45s threshold). Allow at least 30s so a single
+    // missed heartbeat does not flap the online status.
+    let threshold = heartbeat_interval.unwrap_or(15) * 3;
+
+    let result = sqlx::query(
+        r#"UPDATE student_devices
+           SET online_status = 'offline', updated_at = datetime('now')
+           WHERE online_status = 'online'
+             AND last_seen_at < datetime('now', ?)"#
+    )
+    .bind(format!("-{} seconds", threshold))
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() > 0 {
+        info!("Marked {} device(s) offline (heartbeat stale > {}s)", result.rows_affected(), threshold);
+    }
+
+    Ok(())
 }
 
 async fn check_and_execute(pool: &SqlitePool, ws_tx: &broadcast::Sender<String>) -> Result<(), Box<dyn std::error::Error>> {

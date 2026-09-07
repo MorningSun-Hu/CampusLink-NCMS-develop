@@ -107,7 +107,6 @@ const modeLabel = (mode: string) => {
   const map: Record<string, string> = {
     open: '开放',
     teaching: '教学',
-    conditional_open: '有条开',
     exam: '考试',
     locked: '锁屏',
   }

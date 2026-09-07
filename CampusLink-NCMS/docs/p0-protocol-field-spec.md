@@ -15,9 +15,11 @@
 
 ### 枚举 `ModeType`
 
+> 注：编号 2（原 `MODE_CONDITIONAL_OPEN`）已从产品设计中移除，保留编号占位以兼容存量协议数据。
+
 - `MODE_OPEN = 0`
 - `MODE_TEACHING = 1`
-- `MODE_CONDITIONAL_OPEN = 2`
+- ~~`MODE_CONDITIONAL_OPEN = 2`~~（已移除，编号保留占位）
 - `MODE_EXAM = 3`
 - `MODE_LOCKED = 4`
 

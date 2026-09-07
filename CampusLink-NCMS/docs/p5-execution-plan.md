@@ -49,9 +49,11 @@
 - 不同模式对应不同的锁定强度：
   - **开放模式**：解除所有限制
   - **授课模式**：锁定屏幕，学生跟随教师演示
-  - **条件开放模式**：仅开放白名单应用/网站
   - **考试模式**：全屏锁定，禁止切换应用
-  - **锁定模式**：完全锁定，仅保留解锁入口
+  - **锁定模式**：完全锁定，仅保留解锁入口（仅可由教师端远程解锁或超级密码解锁）
+
+> 注：早期设计中的"条件开放模式"（conditional_open）已从产品设计中移除，
+> 不再作为可选课堂模式。系统保留四种模式：开放 / 授课 / 考试 / 锁定。
 
 **验收标准：**
 - [ ] 每种模式都有对应的锁定行为
@@ -216,9 +218,8 @@ impl InputBlocker {
 |------|----------|------|
 | 开放模式 | 无 | 解除所有限制，恢复正常桌面 |
 | 授课模式 | 中 | 锁定学生屏幕，跟随教师演示（待实现投屏接收） |
-| 条件开放模式 | 低 | 仅允许白名单应用/网站，拦截其他 |
 | 考试模式 | 高 | 全屏锁定，禁止切换应用，禁用 USB |
-| 锁定模式 | 最高 | 完全锁定，仅保留解锁入口 |
+| 锁定模式 | 最高 | 完全锁定，仅保留解锁入口（教师端远程解锁 / 超级密码解锁） |
 
 **实现方案：**
 ```rust
@@ -226,7 +227,7 @@ impl InputBlocker {
 pub enum ModeType {
     Open = 0,           // 开放模式
     Teaching = 1,       // 授课模式
-    Conditional = 2,    // 条件开放模式
+    // 2 预留（原"条件开放模式"已从产品移除，保留编号以兼容存量协议）
     Exam = 3,           // 考试模式
     Locked = 4,         // 锁定模式
 }
@@ -241,7 +242,6 @@ impl ModeManager {
         match mode {
             ModeType::Open => self.disable_all_locks().await?,
             ModeType::Teaching => self.enable_teaching_mode().await?,
-            ModeType::Conditional => self.enable_conditional_mode().await?,
             ModeType::Exam => self.enable_exam_mode().await?,
             ModeType::Locked => self.lock_completely().await?,
         }

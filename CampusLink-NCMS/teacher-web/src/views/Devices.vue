@@ -54,7 +54,6 @@
           <el-select v-model="modeForm.targetMode" style="width: 100%">
             <el-option label="开放模式" value="open" />
             <el-option label="授课模式" value="teaching" />
-            <el-option label="条件开放" value="conditional_open" />
             <el-option label="考试模式" value="exam" />
             <el-option label="锁定" value="locked" />
           </el-select>
@@ -134,7 +133,6 @@ const getModeTagType = (mode: string) => {
     teaching: 'primary',
     exam: 'warning',
     locked: 'danger',
-    conditional_open: 'info',
   }
   return types[mode] || 'info'
 }
@@ -145,7 +143,6 @@ const formatMode = (mode: string) => {
     teaching: '授课模式',
     exam: '考试模式',
     locked: '锁定',
-    conditional_open: '条件开放',
   }
   return names[mode] || mode
 }

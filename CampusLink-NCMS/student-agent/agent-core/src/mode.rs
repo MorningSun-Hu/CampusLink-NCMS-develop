@@ -11,7 +11,6 @@ use crate::config::Config;
 pub enum ModeType {
     Open = 0,
     Teaching = 1,
-    ConditionalOpen = 2,
     Exam = 3,
     Locked = 4,
 }
@@ -21,7 +20,6 @@ impl ToString for ModeType {
         match self {
             ModeType::Open => "open".to_string(),
             ModeType::Teaching => "teaching".to_string(),
-            ModeType::ConditionalOpen => "conditional_open".to_string(),
             ModeType::Exam => "exam".to_string(),
             ModeType::Locked => "locked".to_string(),
         }
@@ -49,10 +47,6 @@ pub async fn handle_mode_switch(
         ModeType::Teaching => {
             info!("Switching to Teaching mode - enabling screen lock");
             enable_teaching_mode().await?;
-        }
-        ModeType::ConditionalOpen => {
-            info!("Switching to Conditional Open mode - enabling whitelist restrictions");
-            enable_conditional_mode().await?;
         }
         ModeType::Exam => {
             info!("Switching to Exam mode - enabling exam lockdown");
@@ -97,12 +91,6 @@ async fn disable_all_locks() -> Result<()> {
 /// 授课模式：锁定屏幕，跟随教师演示
 async fn enable_teaching_mode() -> Result<()> {
     info!("Enabling Teaching mode - screen lock active");
-    Ok(())
-}
-
-/// 条件开放模式：仅开放白名单应用/网站
-async fn enable_conditional_mode() -> Result<()> {
-    info!("Enabling Conditional Open mode - whitelist restrictions active");
     Ok(())
 }
 
@@ -186,7 +174,6 @@ async fn spawn_lock_screen(
 pub fn parse_mode(mode_str: &str) -> ModeType {
     match mode_str {
         "teaching" => ModeType::Teaching,
-        "conditional_open" => ModeType::ConditionalOpen,
         "exam" => ModeType::Exam,
         "locked" => ModeType::Locked,
         _ => ModeType::Open,

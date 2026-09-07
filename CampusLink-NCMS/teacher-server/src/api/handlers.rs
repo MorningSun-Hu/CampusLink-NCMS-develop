@@ -153,6 +153,13 @@ pub async fn mode_switch_handler(
     State(state): State<AppState>,
     Json(req): Json<ModeSwitchRequest>,
 ) -> impl IntoResponse {
+    const VALID_MODES: [&str; 4] = ["open", "teaching", "exam", "locked"];
+    if !VALID_MODES.contains(&req.target_mode.as_str()) {
+        return Json(ApiResponse::<ModeSwitchResponse>::error(
+            400,
+            format!("非法模式: {}（可选: open/teaching/exam/locked）", req.target_mode),
+        ));
+    }
     match device::switch_device_mode(&state.pool, &req.device_id, &req.target_mode, &req.operator_name).await {
         Ok(command_id) => {
             let msg = format!(r#"{{"type":"mode_switch","device_id":"{}","mode":"{}","operator":"{}","timestamp":{}}}"#, 
@@ -169,7 +176,7 @@ pub async fn mode_switch_handler(
                 command_id,
                 target_device_id: req.device_id.clone(),
                 target_mode: match req.target_mode.as_str() {
-                    "open" => 0, "teaching" => 1, "conditional_open" => 2, "exam" => 3, "locked" => 4,
+                    "open" => 0, "teaching" => 1, "exam" => 3, "locked" => 4,
                     _ => 0,
                 },
                 effective_at: chrono::Utc::now().timestamp(),
@@ -375,7 +382,7 @@ async fn handle_socket(socket: WebSocket, pool: SqlitePool, mut rx: broadcast::R
 
 fn mode_value_to_str(v: i32) -> &'static str {
     match v {
-        1 => "teaching", 2 => "conditional_open", 3 => "exam", 4 => "locked", _ => "open",
+        1 => "teaching", 3 => "exam", 4 => "locked", _ => "open",
     }
 }
 

@@ -6,7 +6,7 @@ package campuslink.ncms.v1;
 enum ModeType {
     MODE_OPEN = 0;
     MODE_TEACHING = 1;
-    MODE_CONDITIONAL_OPEN = 2;
+    // MODE_CONDITIONAL_OPEN = 2;  // 已移除（编号保留占位）
     MODE_EXAM = 3;
     MODE_LOCKED = 4;
 }

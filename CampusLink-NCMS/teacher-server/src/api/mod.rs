@@ -29,7 +29,7 @@ use process_guard_handlers::{create_policy_handler, update_policy_handler, list_
 use dashboard_handlers::dashboard_overview_handler;
 use student_handlers::{create_student_handler, list_students_handler, get_student_handler, update_student_handler, delete_student_handler, import_students_handler, export_students_handler};
 use settings_handlers::{get_lock_password_handler, update_lock_password_handler, get_schedule_handler, update_schedule_handler};
-use auth_handlers::login_handler;
+use auth_handlers::{login_handler, student_login_handler};
 use whitelist_handlers::{list_whitelist_handler, import_whitelist_handler, approve_whitelist_handler, delete_whitelist_handler};
 use repair_handlers::{create_repair_handler, list_repairs_handler, update_repair_handler, delete_repair_handler};
 use network_account_handlers::{list_accounts_handler, create_account_handler, update_account_handler, delete_account_handler};
@@ -84,6 +84,7 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
     let public_routes = Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/auth/login", post(login_handler))
+        .route("/api/auth/student-login", post(student_login_handler))
         .route("/api/devices/register", post(register_device_handler))
         // Student agent report endpoints: authenticated by device_id (registered device)
         .route("/api/attendance/check-in", post(check_in_handler))

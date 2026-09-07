@@ -21,6 +21,30 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct StudentLoginRow {
+    pub id: String,
+    pub student_no: String,
+    pub name: String,
+    pub password_hash: String,
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StudentLoginRequest {
+    pub student_no: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StudentLoginResponse {
+    pub token: String,
+    pub student_id: String,
+    pub student_no: String,
+    pub name: String,
+    pub expires_at: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,
@@ -108,6 +132,51 @@ pub async fn login(pool: &SqlitePool, req: &LoginRequest) -> Result<LoginRespons
         username: user.username,
         display_name: user.display_name,
         role: user.role,
+        expires_at: exp.timestamp(),
+    })
+}
+
+pub async fn student_login(pool: &SqlitePool, req: &StudentLoginRequest) -> Result<StudentLoginResponse> {
+    let student = sqlx::query_as::<_, StudentLoginRow>(
+        "SELECT id, student_no, name, password_hash, status FROM students WHERE student_no = ?"
+    )
+    .bind(&req.student_no)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("学号或密码错误"))?;
+
+    if student.status != "active" {
+        return Err(anyhow::anyhow!("该学生账号已停用"));
+    }
+
+    let verified = bcrypt::verify(&req.password, &student.password_hash)
+        .map_err(|_| anyhow::anyhow!("学号或密码错误"))?;
+    if !verified {
+        return Err(anyhow::anyhow!("学号或密码错误"));
+    }
+
+    let now = Utc::now();
+    let exp = now + chrono::Duration::hours(8);
+    let claims = Claims {
+        sub: student.id.clone(),
+        username: student.student_no.clone(),
+        role: "student".to_string(),
+        iat: now.timestamp() as usize,
+        exp: exp.timestamp() as usize,
+    };
+
+    let secret = get_jwt_secret(pool).await?;
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+    )?;
+
+    Ok(StudentLoginResponse {
+        token,
+        student_id: student.id,
+        student_no: student.student_no,
+        name: student.name,
         expires_at: exp.timestamp(),
     })
 }
@@ -215,5 +284,71 @@ mod tests {
         ).unwrap();
 
         assert!(verify_token(&token, secret).is_err());
+    }
+
+    #[tokio::test]
+    async fn student_login_verifies_account_and_issues_token() {
+        let pool = setup_pool().await;
+        let password_hash = bcrypt::hash("stu123", 4).unwrap();
+        sqlx::query(
+            "INSERT INTO students (id, student_no, name, password_hash, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'active', datetime('now'), datetime('now'))"
+        )
+        .bind("stu-1")
+        .bind("2026001")
+        .bind("张三")
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let resp = student_login(&pool, &StudentLoginRequest {
+            student_no: "2026001".to_string(),
+            password: "stu123".to_string(),
+        }).await.unwrap();
+
+        assert_eq!(resp.student_id, "stu-1");
+        assert_eq!(resp.name, "张三");
+        assert!(!resp.token.is_empty());
+        assert!(resp.expires_at > chrono::Utc::now().timestamp());
+
+        let claims = verify_token(&resp.token, &get_jwt_secret(&pool).await.unwrap()).unwrap();
+        assert_eq!(claims.role, "student");
+        assert_eq!(claims.username, "2026001");
+    }
+
+    #[tokio::test]
+    async fn student_login_rejects_wrong_password() {
+        let pool = setup_pool().await;
+        let password_hash = bcrypt::hash("stu123", 4).unwrap();
+        sqlx::query(
+            "INSERT INTO students (id, student_no, name, password_hash, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'active', datetime('now'), datetime('now'))"
+        )
+        .bind("stu-2")
+        .bind("2026002")
+        .bind("李四")
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let result = student_login(&pool, &StudentLoginRequest {
+            student_no: "2026002".to_string(),
+            password: "wrong".to_string(),
+        }).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn student_login_rejects_unknown_student() {
+        let pool = setup_pool().await;
+        let result = student_login(&pool, &StudentLoginRequest {
+            student_no: "9999999".to_string(),
+            password: "whatever".to_string(),
+        }).await;
+
+        assert!(result.is_err());
     }
 }

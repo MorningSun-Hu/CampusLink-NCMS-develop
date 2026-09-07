@@ -662,6 +662,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "campus-checkin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "eframe",
+ "egui",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "campus-guard"
 version = "0.1.0"
 dependencies = [

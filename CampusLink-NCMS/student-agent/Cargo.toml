@@ -1,5 +1,5 @@
 [workspace]
-members = ["agent-core", "campus-guard", "campus-lock"]
+members = ["agent-core", "campus-guard", "campus-lock", "campus-checkin"]
 resolver = "2"
 
 [workspace.dependencies]

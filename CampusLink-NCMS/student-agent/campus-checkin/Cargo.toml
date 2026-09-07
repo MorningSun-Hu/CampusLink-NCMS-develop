@@ -1,0 +1,23 @@
+[package]
+name = "campus-checkin"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "campus-checkin"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+eframe = "0.31"
+egui = "0.31"
+serde.workspace = true
+serde_json.workspace = true
+reqwest = { workspace = true, features = ["json", "blocking"] }
+chrono.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Win32_UI_Input_Ime", "Win32_System_Threading"] }

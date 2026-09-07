@@ -37,3 +37,11 @@
   - `cargo test` 不会更新 `target/debug/teacher-server` 二进制，修改 main.rs 后需先 `cargo build` 再启动服务验证
   - domain 层已建立内存 SQLite 单测体系：`domain/test_support.rs` 提供 `setup_pool()`（跑全量迁移）与设备/学生注册辅助函数，运行 `cargo test --all-targets` 即可（23 个测试）
   - 学生端上报接口已改为公开路由+device_id 校验（check-in/inspection-submit/hardware-snapshot + policies/process-guard/sync），教师端查询类接口仍受 JWT 保护
+  - Windows 交叉编译：需 `apt-get install gcc-mingw-w64-x86-64` + `rustup target add x86_64-pc-windows-gnu`，用 `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc cargo build --release --target x86_64-pc-windows-gnu`（勿在项目写死 .cargo/config.toml，避免污染 Linux 构建）
+  - teacher-server Windows 编译约 12 分钟、student-agent（含 eframe/egui 的 campus-lock）约 11 分钟；产物均静态链接只依赖 Windows 系统 DLL
+  - Windows 发布包位置 `dist/windows-release/`，含 teacher-server（exe+start.bat+config.toml+static）与 student-agent（agent-core/campus-guard/campus-lock 三 exe+start.bat）；zip 包 `dist/CampusLink-NCMS-windows-v1.1.zip`
+  - student-agent 配置加密存于 `config/config.enc`，默认连接 localhost:8080 或 UDP 9999 广播自动发现教师端；锁屏密码默认 admin123
+  - Windows bat 脚本必须用 CRLF 换行（cmd 不认 LF，块结构 `( ) else ( )` 会报"此时不应有..."），且避免块结构改用 goto 跳转
+  - 教师端 UDP discovery 必须返回本机局域网 IP 而非 0.0.0.0（0.0.0.0 无法作为连接目标，Windows 报 os error 10049）；已改用 if-addrs 枚举非回环 IPv4 接口
+  - 注意：`local-ip-address` 0.1 不支持 Windows（仅 unix 且依赖 ipconfig 命令），交叉编译项目禁用；获取本机 IP 用 `if-addrs` 0.15
+  - 学生端已把 URL 含 0.0.0.0 视为未配置重新 discovery，discovery 失败时回退 localhost 保存

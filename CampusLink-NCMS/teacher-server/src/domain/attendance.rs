@@ -83,15 +83,37 @@ pub async fn check_in(pool: &SqlitePool, device_id: &str, student_id: Option<&st
         })
         .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
 
+    // If a student_id is supplied but does not exist in the students table,
+    // it is likely a free-form name from open-mode check-in. Store the record
+    // with a NULL student_id (to satisfy the FK constraint) and keep the
+    // supplied value in remarks.
+    let (resolved_student_id, remarks) = if let Some(sid) = student_id {
+        let exists: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM students WHERE id = ?"
+        )
+        .bind(sid)
+        .fetch_optional(pool)
+        .await?;
+
+        if exists.is_some() {
+            (Some(sid.to_string()), None)
+        } else {
+            (None, Some(format!("open-checkin:{}", sid)))
+        }
+    } else {
+        (None, None)
+    };
+
     sqlx::query(
-        r#"INSERT INTO attendance_records (id, student_id, device_id, check_in_time, status, created_at)
-           VALUES (?, ?, ?, ?, ?, datetime('now'))"#
+        r#"INSERT INTO attendance_records (id, student_id, device_id, check_in_time, status, remarks, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"#
     )
     .bind(&record_id)
-    .bind(student_id)
+    .bind(&resolved_student_id)
     .bind(device_id)
     .bind(&check_in_time)
     .bind(status)
+    .bind(&remarks)
     .execute(pool)
     .await?;
 
@@ -245,6 +267,21 @@ mod tests {
         assert_eq!(stats.total, 2);
         assert_eq!(stats.present, 1);
         assert_eq!(stats.late, 1);
+    }
+
+    #[tokio::test]
+    async fn check_in_with_unknown_student_degrades_to_remarks() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-TEST-005").await;
+
+        // Free-form name from open-mode check-in is not in the students table.
+        let resp = check_in(&pool, &device_id, Some("张三"), Some(1_700_000_000)).await.unwrap();
+        assert_eq!(resp.status, "present");
+
+        let records = list_attendance(&pool, None).await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].student_id, None);
+        assert_eq!(records[0].remarks.as_deref(), Some("open-checkin:张三"));
     }
 
     #[tokio::test]

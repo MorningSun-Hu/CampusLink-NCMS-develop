@@ -35,17 +35,29 @@ async fn main() -> Result<()> {
     let mut config = Config::load().unwrap_or_else(|_| Config::default());
     info!("Configuration loaded");
 
-    // Try UDP discovery if teacher_server_url is not configured
-    if config.teacher_server_url.is_empty() || config.teacher_server_url == "http://localhost:8080" {
+    // Try UDP discovery if teacher_server_url is not configured (including
+    // stale 0.0.0.0 saved from a previous buggy discovery response)
+    let needs_discovery = config.teacher_server_url.is_empty()
+        || config.teacher_server_url == "http://localhost:8080"
+        || config.teacher_server_url.contains("0.0.0.0");
+    if needs_discovery {
         info!("Attempting UDP discovery...");
         match discovery::discover(5).await {
             Ok(url) => {
-                config.teacher_server_url = url;
-                config.save()?;
-                info!("Teacher server discovered: {}", config.teacher_server_url);
+                if url.contains("0.0.0.0") {
+                    warn!("Discovered URL is unusable ({}), keeping previous config", url);
+                } else {
+                    config.teacher_server_url = url;
+                    config.save()?;
+                    info!("Teacher server discovered: {}", config.teacher_server_url);
+                }
             }
             Err(e) => {
                 warn!("Discovery failed: {}. Using default URL.", e);
+                if config.teacher_server_url.contains("0.0.0.0") {
+                    config.teacher_server_url = "http://localhost:8080".to_string();
+                    let _ = config.save();
+                }
             }
         }
     }
@@ -67,8 +79,8 @@ async fn main() -> Result<()> {
         warn!("Hardware snapshot submit failed: {}", e);
     }
 
-    if let Err(e) = attendance::check_in_auto(&config).await {
-        warn!("Auto check-in failed: {}", e);
+    if let Err(e) = attendance::check_in_interactive(&config).await {
+        warn!("Check-in failed: {}", e);
     }
 
     let policies = process_guard::sync_policies(&config).await;

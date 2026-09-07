@@ -7,6 +7,7 @@ use super::handlers::ApiResponse;
 use super::handlers::AppState;
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardOverview {
     pub student_count: i64,
     pub registered_device_count: i64,

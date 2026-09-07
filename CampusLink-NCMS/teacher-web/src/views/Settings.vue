@@ -38,7 +38,6 @@
           <el-select v-model="scheduleTargetMode" placeholder="选择模式" style="width: 200px">
             <el-option label="开放模式" value="open" />
             <el-option label="教学模式" value="teaching" />
-            <el-option label="有条件开放" value="conditional_open" />
             <el-option label="考试模式" value="exam" />
             <el-option label="锁屏模式" value="locked" />
           </el-select>
