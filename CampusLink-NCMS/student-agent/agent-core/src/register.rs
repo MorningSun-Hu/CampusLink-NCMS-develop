@@ -65,14 +65,28 @@ fn get_hostname() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
+fn get_local_ip() -> String {
+    match if_addrs::get_if_addrs() {
+        Ok(addrs) => {
+            for a in &addrs {
+                if let std::net::IpAddr::V4(v4) = a.ip() {
+                    if !v4.is_loopback() && !v4.is_link_local() {
+                        return v4.to_string();
+                    }
+                }
+            }
+            "0.0.0.0".to_string()
+        }
+        Err(_) => "0.0.0.0".to_string(),
+    }
+}
+
 pub async fn collect_and_register(config: &mut Config) -> Result<()> {
     let client = Client::new();
     
     // 采集本机信息
     let hostname = get_hostname();
-    let ip_address = local_ip_address::local_ip()
-        .map(|ip| ip.to_string())
-        .unwrap_or_else(|_| "0.0.0.0".to_string());
+    let ip_address = get_local_ip();
     let mac_address = mac_address::get_mac_address()
         .map_err(|e| anyhow::anyhow!("Failed to get MAC address: {}", e))?
         .map(|m| m.to_string())
