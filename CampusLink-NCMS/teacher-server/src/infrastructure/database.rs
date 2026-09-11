@@ -53,7 +53,7 @@ fn resolve_database_url(database_url: &str) -> String {
 
                 let absolute = exe_dir.join(db_path);
                 let absolute_str = absolute.to_string_lossy().replace('\\', "/");
-                return format!("sqlite:///{}", absolute_str);
+                return format!("sqlite:{}", absolute_str);
             }
         }
     }
