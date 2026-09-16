@@ -28,10 +28,12 @@ pub struct StudentLoginRow {
     pub name: String,
     pub password_hash: String,
     pub status: String,
+    pub password_set: i64,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct StudentLoginRequest {
+    /// 学号或姓名
     pub student_no: String,
     pub password: String,
 }
@@ -42,6 +44,7 @@ pub struct StudentLoginResponse {
     pub student_id: String,
     pub student_no: String,
     pub name: String,
+    pub password_set: bool,
     pub expires_at: i64,
 }
 
@@ -138,8 +141,10 @@ pub async fn login(pool: &SqlitePool, req: &LoginRequest) -> Result<LoginRespons
 
 pub async fn student_login(pool: &SqlitePool, req: &StudentLoginRequest) -> Result<StudentLoginResponse> {
     let student = sqlx::query_as::<_, StudentLoginRow>(
-        "SELECT id, student_no, name, password_hash, status FROM students WHERE student_no = ?"
+        "SELECT id, student_no, name, password_hash, status, password_set
+         FROM students WHERE student_no = ? OR name = ? LIMIT 1"
     )
+    .bind(&req.student_no)
     .bind(&req.student_no)
     .fetch_optional(pool)
     .await?
@@ -177,8 +182,36 @@ pub async fn student_login(pool: &SqlitePool, req: &StudentLoginRequest) -> Resu
         student_id: student.id,
         student_no: student.student_no,
         name: student.name,
+        password_set: student.password_set != 0,
         expires_at: exp.timestamp(),
     })
+}
+
+pub async fn change_student_password(
+    pool: &SqlitePool,
+    student_id: &str,
+    old_password: &str,
+    new_password: &str,
+) -> Result<()> {
+    if new_password.len() < 4 {
+        anyhow::bail!("新密码长度不得少于 4 位");
+    }
+
+    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM students WHERE id = ?")
+        .bind(student_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+
+    let hash = hash.ok_or_else(|| anyhow::anyhow!("学生不存在"))?;
+
+    let verified = bcrypt::verify(old_password, &hash)
+        .map_err(|_| anyhow::anyhow!("原密码错误"))?;
+    if !verified {
+        return Err(anyhow::anyhow!("原密码错误"));
+    }
+
+    crate::domain::student::set_student_password(pool, student_id, new_password).await
 }
 
 pub fn verify_token(token: &str, secret: &str) -> Result<Claims> {
@@ -315,6 +348,43 @@ mod tests {
         let claims = verify_token(&resp.token, &get_jwt_secret(&pool).await.unwrap()).unwrap();
         assert_eq!(claims.role, "student");
         assert_eq!(claims.username, "2026001");
+    }
+
+    #[tokio::test]
+    async fn student_login_by_name_and_password_change_flow() {
+        let pool = setup_pool().await;
+        let password_hash = bcrypt::hash("init123", 4).unwrap();
+        sqlx::query(
+            "INSERT INTO students (id, student_no, name, password_hash, password_set, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 0, 'active', datetime('now'), datetime('now'))"
+        )
+        .bind("stu-pwd")
+        .bind("2026009")
+        .bind("王五")
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 初始密码登录，password_set 为 false
+        let resp = student_login(&pool, &StudentLoginRequest {
+            student_no: "王五".to_string(),
+            password: "init123".to_string(),
+        }).await.unwrap();
+        assert!(!resp.password_set);
+
+        // 首次修改密码后 password_set 变为 true
+        change_student_password(&pool, "stu-pwd", "init123", "custom888").await.unwrap();
+        let resp = student_login(&pool, &StudentLoginRequest {
+            student_no: "2026009".to_string(),
+            password: "custom888".to_string(),
+        }).await.unwrap();
+        assert!(resp.password_set);
+
+        // 原密码错误时拒绝改密
+        assert!(change_student_password(&pool, "stu-pwd", "wrong", "another1").await.is_err());
+        // 新密码过短时拒绝
+        assert!(change_student_password(&pool, "stu-pwd", "custom888", "123").await.is_err());
     }
 
     #[tokio::test]

@@ -31,6 +31,13 @@ pub enum WebSocketCommand {
     Unlock {
         timestamp: u64,
     },
+    /// 签到触发命令（模式切换后由服务端下发）
+    CheckinTrigger {
+        #[serde(default)]
+        device_id: String,
+        #[serde(default)]
+        timestamp: u64,
+    },
     /// 超级密码更新
     SuperPwd {
         password: String,
@@ -182,6 +189,18 @@ impl CommandHandler {
                 }
             }
             
+            WebSocketCommand::CheckinTrigger { device_id, timestamp: _ } => {
+                if !device_id.is_empty() && device_id != self.config.device_id.as_deref().unwrap_or("") {
+                    debug!("Checkin trigger for different device {} ignored", device_id);
+                    return Ok(());
+                }
+                info!("Received checkin trigger command, mode={}", self.config.current_mode);
+                if let Err(e) = crate::attendance::check_in_interactive(&self.config).await {
+                    warn!("Interactive check-in failed: {}", e);
+                    println!("\n[CHECK-IN FAILED] {}\n", e);
+                }
+            }
+
             WebSocketCommand::HeartbeatAck { ack_code, message } => {
                 debug!("Heartbeat acknowledged: code={}, msg={:?}", ack_code, message);
             }

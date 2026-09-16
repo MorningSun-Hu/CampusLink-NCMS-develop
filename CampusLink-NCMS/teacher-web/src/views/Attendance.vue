@@ -3,15 +3,35 @@
     <div class="header">
       <h2 class="page-title">签到管理</h2>
       <div class="header-actions">
+        <el-select v-model="contextDeviceId" placeholder="查看设备签到要求" clearable filterable style="width: 220px" @change="loadContext">
+          <el-option v-for="d in devices" :key="d.id" :label="`${d.deviceName}（${d.ipAddress}）`" :value="d.id" />
+        </el-select>
         <el-button type="primary" @click="showRetroactiveDialog = true">补签</el-button>
         <el-button @click="loadData">刷新</el-button>
       </div>
     </div>
 
+    <el-alert
+      v-if="context"
+      :type="context.requiresCheckin ? 'success' : 'info'"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      :title="contextTitle"
+    />
+
     <el-table :data="records" v-loading="loading" border stripe>
+      <el-table-column prop="student_no" label="学号" width="120">
+        <template #default="{ row }">{{ row.student_no || '-' }}</template>
+      </el-table-column>
+      <el-table-column prop="student_name" label="姓名" width="110">
+        <template #default="{ row }">{{ row.student_name || '-' }}</template>
+      </el-table-column>
+      <el-table-column prop="seat_no" label="座位号" width="90">
+        <template #default="{ row }">{{ row.seat_no || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="device_id" label="设备ID" width="200" />
-      <el-table-column prop="student_id" label="学生ID" width="120" />
-      <el-table-column prop="check_in_time" label="签到时间" width="180" />
+      <el-table-column prop="check_in_time" label="签到时间" width="200" />
       <el-table-column prop="check_out_time" label="签退时间" width="180">
         <template #default="{ row }">
           {{ row.check_out_time || '-' }}
@@ -104,15 +124,57 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getAttendanceList, getAttendanceStatistics, retroactive } from '@/api/attendance'
+import { getAttendanceList, getAttendanceStatistics, retroactive, getAttendanceContext, type AttendanceContext } from '@/api/attendance'
+import { listDevices, type Device } from '@/api/devices'
 import type { AttendanceRecord, AttendanceStatistics } from '@/api/types'
 
 const records = ref<AttendanceRecord[]>([])
 const stats = ref<Partial<AttendanceStatistics>>({})
 const loading = ref(false)
 const statsDate = ref('')
+
+const devices = ref<Device[]>([])
+const contextDeviceId = ref('')
+const context = ref<AttendanceContext | null>(null)
+
+const modeLabels: Record<string, string> = {
+  open: '开放模式',
+  teaching: '授课模式',
+  exam: '考试模式',
+  locked: '锁定模式',
+}
+
+const contextTitle = computed(() => {
+  if (!context.value) return ''
+  const mode = modeLabels[context.value.mode] || context.value.mode
+  return context.value.requiresCheckin
+    ? `当前设备为${mode}，需要学生签到`
+    : `当前设备为${mode}，该模式不需要签到`
+})
+
+async function loadContext() {
+  if (!contextDeviceId.value) {
+    context.value = null
+    return
+  }
+  try {
+    const res = await getAttendanceContext(contextDeviceId.value)
+    context.value = res.code === 0 ? res.data : null
+  } catch (e) {
+    context.value = null
+  }
+}
+
+async function loadDevices() {
+  try {
+    const res = await listDevices()
+    if (res.code === 0 && res.data) devices.value = res.data
+  } catch (e) {
+    console.error('Load devices failed:', e)
+  }
+}
 
 const showRetroactiveDialog = ref(false)
 const retroactiveLoading = ref(false)
@@ -210,6 +272,7 @@ function statusLabel(status: string) {
 
 onMounted(() => {
   loadData()
+  loadDevices()
 })
 </script>
 

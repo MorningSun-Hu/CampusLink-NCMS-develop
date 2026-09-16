@@ -14,6 +14,12 @@
       <el-table-column prop="deviceCode" label="设备编号" />
       <el-table-column prop="deviceName" label="设备名称" />
       <el-table-column prop="ipAddress" label="IP 地址" />
+      <el-table-column prop="className" label="班级">
+        <template #default="{ row }">{{ row.className || '-' }}</template>
+      </el-table-column>
+      <el-table-column prop="seatNo" label="座位号" width="90">
+        <template #default="{ row }">{{ row.seatNo || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="registerStatus" label="注册状态">
         <template #default="{ row }">
           <el-tag :type="row.registerStatus === 'verified' ? 'success' : 'warning'">
@@ -35,7 +41,7 @@
       </el-table-column>
       <el-table-column prop="lastSeenAt" label="最后心跳时间">
         <template #default="{ row }">
-          {{ row.lastSeenAt || '-' }}
+          {{ formatDateTime(row.lastSeenAt) }}
         </template>
       </el-table-column>
       <el-table-column label="操作" width="250">
@@ -61,6 +67,14 @@
         <el-form-item label="操作人">
           <el-input v-model="modeForm.operatorName" placeholder="请输入操作人姓名" />
         </el-form-item>
+        <el-alert
+          v-if="modeForm.targetMode === 'teaching'"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="授课模式需按班级批量切换"
+          description="授课模式会校验学生座位号与设备座位号一致，请在「班级管理」中选择班级后切换。"
+        />
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -73,6 +87,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { listDevices, switchDeviceMode, lockDevice, unlockDevice, type Device } from '@/api/devices'
+import { formatDateTime } from '@/utils/time'
 import { ElMessage } from 'element-plus'
 
 const devices = ref<Device[]>([])

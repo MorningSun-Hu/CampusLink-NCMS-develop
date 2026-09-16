@@ -186,7 +186,11 @@ pub async fn mode_switch_handler(
             // Send protobuf via broadcast channel as json wrapper for String compatibility
             let _ = state.ws_tx.send(msg);
             let _ = state.ws_tx.send(format!("proto:{}", base64_encode(&proto_bytes)));
-            
+
+            if requires_checkin(&req.target_mode) {
+                dispatch_checkin_trigger(&state, &[req.device_id.clone()]).await;
+            }
+
             Json(ApiResponse::success(ModeSwitchResponse {
                 command_id: uuid::Uuid::new_v4().to_string(),
                 device_id: req.device_id.clone(),
@@ -197,6 +201,26 @@ pub async fn mode_switch_handler(
         Err(e) => {
             error!("Mode switch failed: {}", e);
             Json(ApiResponse::error(500, "模式切换失败".to_string()))
+        }
+    }
+}
+
+pub fn requires_checkin(mode: &str) -> bool {
+    matches!(mode, "open" | "teaching")
+}
+
+pub async fn dispatch_checkin_trigger(state: &AppState, device_ids: &[String]) {
+    let ts = chrono::Utc::now().timestamp();
+    for device_id in device_ids {
+        let online = device::is_online(&state.pool, device_id).await.unwrap_or(false);
+        if online {
+            let msg = format!(
+                r#"{{"type":"checkin_trigger","device_id":"{}","timestamp":{}}}"#,
+                device_id, ts
+            );
+            let _ = state.ws_tx.send(msg);
+        } else if let Err(e) = device::set_pending_checkin(&state.pool, device_id, true).await {
+            warn!("Failed to set pending checkin for {}: {}", device_id, e);
         }
     }
 }
@@ -305,7 +329,9 @@ async fn handle_socket(socket: WebSocket, pool: SqlitePool, mut rx: broadcast::R
                 match msg {
                     Message::Text(text) => {
                         info!("Received: {}", text);
-                        process_heartbeat_json(&pool, &text).await;
+                        if let Some(device_id) = process_heartbeat_json(&pool, &text).await {
+                            resend_pending_trigger(&pool, &device_id, &mut sender, has_key, &session_key).await;
+                        }
                         let ack = r#"{"type":"heartbeat_ack","ack_code":0,"message":"ok"}"#;
                         if has_key {
                             let enc = crypto_util::encrypt_message(ack, &session_key).unwrap_or_else(|_| ack.as_bytes().to_vec());
@@ -319,7 +345,9 @@ async fn handle_socket(socket: WebSocket, pool: SqlitePool, mut rx: broadcast::R
                             match crypto_util::decrypt_message(&data, &session_key) {
                                 Ok(text) => {
                                     info!("Received encrypted: {}", text);
-                                    process_heartbeat_json(&pool, &text).await;
+                                    if let Some(device_id) = process_heartbeat_json(&pool, &text).await {
+                                        resend_pending_trigger(&pool, &device_id, &mut sender, has_key, &session_key).await;
+                                    }
                                     let ack = r#"{"type":"heartbeat_ack","ack_code":0,"message":"ok"}"#;
                                     let enc = crypto_util::encrypt_message(ack, &session_key).unwrap_or_else(|_| ack.as_bytes().to_vec());
                                     let _ = sender.send(Message::Binary(enc)).await;
@@ -331,6 +359,7 @@ async fn handle_socket(socket: WebSocket, pool: SqlitePool, mut rx: broadcast::R
                                         let _ = device::update_heartbeat(&pool, &hb.device_id).await;
                                         let mode_str = mode_value_to_str(hb.current_mode);
                                         let _ = device::update_device_mode(&pool, &hb.device_id, &mode_str).await;
+                                        resend_pending_trigger(&pool, &hb.device_id, &mut sender, has_key, &session_key).await;
                                     }
                                 }
                             }
@@ -386,11 +415,41 @@ fn mode_value_to_str(v: i32) -> &'static str {
     }
 }
 
-async fn process_heartbeat_json(pool: &SqlitePool, text: &str) {
+async fn process_heartbeat_json(pool: &SqlitePool, text: &str) -> Option<String> {
     if let Ok(data) = serde_json::from_str::<serde_json::Value>(text) {
         if let Some(device_id) = data["device_id"].as_str() {
             let _ = device::update_heartbeat(pool, device_id).await;
+            return Some(device_id.to_string());
         }
+    }
+    None
+}
+
+async fn resend_pending_trigger(
+    pool: &SqlitePool,
+    device_id: &str,
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    has_key: bool,
+    session_key: &str,
+) {
+    match device::consume_pending_checkin(pool, device_id).await {
+        Ok(true) => {
+            let trigger = format!(
+                r#"{{"type":"checkin_trigger","device_id":"{}","timestamp":{}}}"#,
+                device_id,
+                chrono::Utc::now().timestamp()
+            );
+            if has_key {
+                if let Ok(enc) = crypto_util::encrypt_message(&trigger, session_key) {
+                    let _ = sender.send(Message::Binary(enc)).await;
+                }
+            } else {
+                let _ = sender.send(Message::Text(trigger)).await;
+            }
+            info!("Resent pending checkin trigger to device={}", device_id);
+        }
+        Ok(false) => {}
+        Err(e) => warn!("Pending checkin lookup failed for {}: {}", device_id, e),
     }
 }
 

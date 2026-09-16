@@ -41,7 +41,25 @@ pub async fn check_in_handler(
         Ok(response) => Json(ApiResponse::success(response)),
         Err(e) => {
             error!("Check-in failed: {}", e);
-            Json(ApiResponse::error(500, "签到失败".to_string()))
+            Json(ApiResponse::error(400, e.to_string()))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContextQuery {
+    pub device_id: String,
+}
+
+pub async fn attendance_context_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<ContextQuery>,
+) -> impl IntoResponse {
+    match attendance::attendance_context(&state.pool, &query.device_id).await {
+        Ok(ctx) => Json(ApiResponse::success(ctx)),
+        Err(e) => {
+            error!("Get attendance context failed: {}", e);
+            Json(ApiResponse::error(404, e.to_string()))
         }
     }
 }

@@ -45,3 +45,16 @@
   - 教师端 UDP discovery 必须返回本机局域网 IP 而非 0.0.0.0（0.0.0.0 无法作为连接目标，Windows 报 os error 10049）；已改用 if-addrs 枚举非回环 IPv4 接口
   - 注意：`local-ip-address` 0.1 不支持 Windows（仅 unix 且依赖 ipconfig 命令），交叉编译项目禁用；获取本机 IP 用 `if-addrs` 0.15
   - 学生端已把 URL 含 0.0.0.0 视为未配置重新 discovery，discovery 失败时回退 localhost 保存
+
+[本地端到端冒烟测试方法（Agent 实测发现）]
+- Date: 2026-09-15
+- Context: 验证班级/座位/签到/改密/模式切换特性时发现
+- Category: Troubleshooting & Debugging / Build & Compilation
+- Instructions:
+  - teacher-server 的 `config/config.toml` 与 `static/` 均相对可执行文件所在目录解析（不是 cwd）；本地冒烟测试需新建临时目录，放入 `teacher-server` 可执行文件、`config/config.toml`、`static/`，再在该目录启动
+  - 冒烟测试用 SQLite 独立库文件（`sqlite:data/xxx.db`），每次换新库名即可获得干净数据，避免删除文件
+  - 公开路由（无需 JWT）：`/api/auth/login`、`/api/auth/student-login`、`/api/auth/student-set-password`、`/api/devices/register`、`/api/attendance/check-in`、`/api/attendance/context`；班级/学生/设备等管理接口需 Bearer JWT
+  - 学生改密接口 `/api/auth/student-set-password` 请求体为 snake_case（`student_id`/`old_password`/`new_password`），已用 serde alias 兼容 camelCase；学生登录 `/api/auth/student-login` 的 `student_no` 可为学号或姓名，初始密码默认 `123456`
+  - 签到 `requiresCheckin` 语义：`open`/`teaching` 为 true，`exam`/`locked` 为 false；授课模式下学生座位号必须与设备座位号一致
+  - 设备重复注册（同 `device_code`）必须返回已存在记录的主键 id，不能返回新生成的 UUID，否则按设备 id 的后续操作（归班/座位/签到）会全部失效（已修复 + 回归测试 `re_register_same_device_code_keeps_stable_id`）
+

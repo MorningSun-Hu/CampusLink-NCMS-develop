@@ -23,6 +23,18 @@ export async function retroactive(data: RetroactiveParams) {
   return response.data
 }
 
+export interface AttendanceContext {
+  deviceId: string
+  mode: string
+  requiresCheckin: boolean
+  classId: string | null
+}
+
+export async function getAttendanceContext(deviceId: string) {
+  const response = await api.get<ApiResponse<AttendanceContext>>('/attendance/context', { params: { device_id: deviceId } })
+  return response.data
+}
+
 export function getExportAttendanceUrl() {
   return '/api/attendance/export'
 }

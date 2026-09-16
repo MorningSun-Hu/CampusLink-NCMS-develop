@@ -6,6 +6,8 @@ use axum::{
 };
 use tracing::{info, error};
 
+use serde::Deserialize;
+
 use crate::api::handlers::ApiResponse;
 use crate::api::handlers::AppState;
 use crate::domain::student;
@@ -85,6 +87,27 @@ pub async fn delete_student_handler(
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetPasswordRequest {
+    pub password: Option<String>,
+}
+
+pub async fn reset_student_password_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ResetPasswordRequest>,
+) -> impl IntoResponse {
+    let password = req.password.filter(|p| !p.is_empty()).unwrap_or_else(|| "123456".to_string());
+    match student::reset_student_password(&state.pool, &id, &password).await {
+        Ok(_) => Json(ApiResponse::success("ok".to_string())),
+        Err(e) => {
+            error!("Reset student password failed: {}", e);
+            Json(ApiResponse::error(500, "重置密码失败".to_string()))
+        }
+    }
+}
+
 pub async fn import_students_handler(
     State(state): State<AppState>,
     mut multipart: Multipart,
@@ -137,11 +160,17 @@ async fn parse_and_import(pool: &sqlx::SqlitePool, data: &[u8]) -> anyhow::Resul
             let seat_no = row.get(3).map(|c| c.to_string());
             let seat_no = seat_no.as_deref().filter(|s| !s.is_empty());
 
-            if student_no.is_empty() || name.is_empty() {
+            if name.is_empty() {
                 continue;
             }
 
-            student::import_student(pool, &student_no, &name, &password, seat_no).await?;
+            let student_no = if student_no.trim().is_empty() {
+                student::generate_student_no()
+            } else {
+                student_no
+            };
+
+            student::import_student(pool, &student_no, &name, &password, seat_no, None).await?;
             count += 1;
         }
     }

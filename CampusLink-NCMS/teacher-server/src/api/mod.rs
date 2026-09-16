@@ -12,6 +12,7 @@ mod auth_handlers;
 mod whitelist_handlers;
 mod repair_handlers;
 mod network_account_handlers;
+mod class_handlers;
 
 use axum::{routing::{get, post, delete, put}, Router, middleware};
 use axum::response::Html;
@@ -20,16 +21,22 @@ use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
 
 use handlers::{register_device_handler, list_devices_handler, mode_switch_handler, ws_handler, lock_screen_handler, unlock_handler, AppState};
-use attendance_handlers::{check_in_handler, statistics_handler, retroactive_handler, list_attendance_handler, export_attendance_handler};
+use attendance_handlers::{check_in_handler, statistics_handler, retroactive_handler, list_attendance_handler, export_attendance_handler, attendance_context_handler};
 use inspection_handlers::{submit_inspection_handler, list_inspections_handler, list_alerts_handler, resolve_alert_handler, export_inspection_handler};
 use photo_handlers::{upload_photo_handler, get_photo_handler, list_photos_handler};
 use hardware_handlers::{submit_snapshot_handler, get_snapshot_handler, list_changes_handler};
 use log_handlers::{query_logs_handler, export_logs_handler};
 use process_guard_handlers::{create_policy_handler, update_policy_handler, list_policies_handler, delete_policy_handler};
 use dashboard_handlers::dashboard_overview_handler;
-use student_handlers::{create_student_handler, list_students_handler, get_student_handler, update_student_handler, delete_student_handler, import_students_handler, export_students_handler};
+use student_handlers::{create_student_handler, list_students_handler, get_student_handler, update_student_handler, delete_student_handler, import_students_handler, export_students_handler, reset_student_password_handler};
 use settings_handlers::{get_lock_password_handler, update_lock_password_handler, get_schedule_handler, update_schedule_handler};
-use auth_handlers::{login_handler, student_login_handler};
+use auth_handlers::{login_handler, student_login_handler, student_set_password_handler};
+use class_handlers::{
+    list_classes_handler, create_class_handler, update_class_handler, delete_class_handler,
+    assign_students_handler, list_class_students_handler, assign_devices_handler,
+    list_class_devices_handler, batch_seats_handler, auto_seats_handler,
+    reset_class_passwords_handler, switch_class_mode_handler,
+};
 use whitelist_handlers::{list_whitelist_handler, import_whitelist_handler, approve_whitelist_handler, delete_whitelist_handler};
 use repair_handlers::{create_repair_handler, list_repairs_handler, update_repair_handler, delete_repair_handler};
 use network_account_handlers::{list_accounts_handler, create_account_handler, update_account_handler, delete_account_handler};
@@ -85,9 +92,11 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/health", get(health_handler))
         .route("/api/auth/login", post(login_handler))
         .route("/api/auth/student-login", post(student_login_handler))
+        .route("/api/auth/student-set-password", post(student_set_password_handler))
         .route("/api/devices/register", post(register_device_handler))
         // Student agent report endpoints: authenticated by device_id (registered device)
         .route("/api/attendance/check-in", post(check_in_handler))
+        .route("/api/attendance/context", get(attendance_context_handler))
         .route("/api/inspection/submit", post(submit_inspection_handler))
         .route("/api/hardware/snapshot", post(submit_snapshot_handler))
         .route("/api/policies/process-guard/sync", get(list_policies_handler))
@@ -126,6 +135,19 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/students/:id", get(get_student_handler))
         .route("/api/students/:id", put(update_student_handler))
         .route("/api/students/:id", delete(delete_student_handler))
+        .route("/api/students/:id/reset-password", post(reset_student_password_handler))
+        .route("/api/classes", get(list_classes_handler))
+        .route("/api/classes", post(create_class_handler))
+        .route("/api/classes/:id", put(update_class_handler))
+        .route("/api/classes/:id", delete(delete_class_handler))
+        .route("/api/classes/:id/students", get(list_class_students_handler))
+        .route("/api/classes/:id/students", post(assign_students_handler))
+        .route("/api/classes/:id/devices", get(list_class_devices_handler))
+        .route("/api/classes/:id/devices", post(assign_devices_handler))
+        .route("/api/classes/:id/seats", post(batch_seats_handler))
+        .route("/api/classes/:id/seats/auto", post(auto_seats_handler))
+        .route("/api/classes/:id/passwords/reset", post(reset_class_passwords_handler))
+        .route("/api/classes/:id/mode", post(switch_class_mode_handler))
         .route("/api/settings/lock-password", get(get_lock_password_handler))
         .route("/api/settings/lock-password", put(update_lock_password_handler))
         .route("/api/settings/schedule", get(get_schedule_handler))

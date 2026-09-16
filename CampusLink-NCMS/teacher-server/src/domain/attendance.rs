@@ -12,32 +12,69 @@ pub struct AttendanceRow {
     pub check_out_time: Option<String>,
     pub status: String,
     pub remarks: Option<String>,
+    pub seat_no: Option<String>,
     pub created_at: String,
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AttendanceRecord {
     pub id: String,
     pub student_id: Option<String>,
+    pub student_no: Option<String>,
+    pub student_name: Option<String>,
     pub device_id: String,
     pub check_in_time: String,
     pub check_out_time: Option<String>,
     pub status: String,
     pub remarks: Option<String>,
+    pub seat_no: Option<String>,
 }
 
-impl From<AttendanceRow> for AttendanceRecord {
-    fn from(row: AttendanceRow) -> Self {
+impl AttendanceRow {
+    fn into_record(self, student_no: Option<String>, student_name: Option<String>) -> AttendanceRecord {
         AttendanceRecord {
-            id: row.id,
-            student_id: row.student_id,
-            device_id: row.device_id,
-            check_in_time: row.check_in_time,
-            check_out_time: row.check_out_time,
-            status: row.status,
-            remarks: row.remarks,
+            id: self.id,
+            student_id: self.student_id,
+            student_no,
+            student_name,
+            device_id: self.device_id,
+            check_in_time: crate::domain::time_util::to_rfc3339(&self.check_in_time),
+            check_out_time: crate::domain::time_util::to_rfc3339_opt(self.check_out_time.as_deref()),
+            status: self.status,
+            remarks: self.remarks,
+            seat_no: self.seat_no,
         }
     }
+}
+
+fn name_from_remarks(remarks: Option<&str>) -> Option<String> {
+    remarks
+        .and_then(|r| r.strip_prefix("open-checkin:"))
+        .map(|s| s.to_string())
+}
+
+async fn enrich_records(pool: &SqlitePool, rows: Vec<AttendanceRow>) -> Result<Vec<AttendanceRecord>> {
+    let mut result = Vec::with_capacity(rows.len());
+    for row in rows {
+        let (student_no, student_name) = match row.student_id.as_deref() {
+            Some(sid) => {
+                let info: Option<(String, String)> = sqlx::query_as(
+                    "SELECT student_no, name FROM students WHERE id = ?"
+                )
+                .bind(sid)
+                .fetch_optional(pool)
+                .await?;
+                match info {
+                    Some((no, name)) => (Some(no), Some(name)),
+                    None => (None, name_from_remarks(row.remarks.as_deref())),
+                }
+            }
+            None => (None, name_from_remarks(row.remarks.as_deref())),
+        };
+        result.push(row.into_record(student_no, student_name));
+    }
+    Ok(result)
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,30 +120,51 @@ pub async fn check_in(pool: &SqlitePool, device_id: &str, student_id: Option<&st
         })
         .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
 
-    // If a student_id is supplied but does not exist in the students table,
-    // it is likely a free-form name from open-mode check-in. Store the record
-    // with a NULL student_id (to satisfy the FK constraint) and keep the
-    // supplied value in remarks.
+    let device_mode: Option<String> = sqlx::query_scalar("SELECT current_mode FROM student_devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(pool)
+        .await?;
+    let device_seat: Option<String> = sqlx::query_scalar("SELECT seat_no FROM student_devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(pool)
+        .await?;
+
+    let mut seat_snapshot: Option<String> = None;
+
+    // 授课模式：必须使用学生账号，且学生座位号需与设备座位号一致
     let (resolved_student_id, remarks) = if let Some(sid) = student_id {
-        let exists: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM students WHERE id = ?"
+        let student = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, seat_no FROM students WHERE id = ?"
         )
         .bind(sid)
         .fetch_optional(pool)
         .await?;
 
-        if exists.is_some() {
-            (Some(sid.to_string()), None)
-        } else {
-            (None, Some(format!("open-checkin:{}", sid)))
+        match student {
+            Some((student_pk, student_seat)) => {
+                if device_mode.as_deref() == Some("teaching") {
+                    if student_seat.is_none() || device_seat.is_none() || student_seat != device_seat {
+                        anyhow::bail!("座位不匹配，请在指定机器的座位签到");
+                    }
+                }
+                seat_snapshot = student_seat.or_else(|| device_seat.clone());
+                (Some(student_pk), None)
+            }
+            None => {
+                if device_mode.as_deref() == Some("teaching") {
+                    anyhow::bail!("学号或密码错误");
+                }
+                // 开放模式下自由填写的姓名，student_id 实际存放姓名
+                (None, Some(format!("open-checkin:{}", sid)))
+            }
         }
     } else {
         (None, None)
     };
 
     sqlx::query(
-        r#"INSERT INTO attendance_records (id, student_id, device_id, check_in_time, status, remarks, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"#
+        r#"INSERT INTO attendance_records (id, student_id, device_id, check_in_time, status, remarks, seat_no, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"#
     )
     .bind(&record_id)
     .bind(&resolved_student_id)
@@ -114,6 +172,7 @@ pub async fn check_in(pool: &SqlitePool, device_id: &str, student_id: Option<&st
     .bind(&check_in_time)
     .bind(status)
     .bind(&remarks)
+    .bind(&seat_snapshot)
     .execute(pool)
     .await?;
 
@@ -176,7 +235,7 @@ async fn list_by_date(pool: &SqlitePool, date: Option<&str>) -> Result<Vec<Atten
         sqlx::query_as::<_, AttendanceRow>(&sql).fetch_all(pool).await?
     };
 
-    Ok(rows.into_iter().map(|r| r.into()).collect())
+    enrich_records(pool, rows).await
 }
 
 pub async fn retroactive_check_in(pool: &SqlitePool, student_id: &str, device_id: &str, check_in_time: &str, remarks: Option<&str>) -> Result<CheckInResponse> {
@@ -209,7 +268,36 @@ pub async fn list_attendance(pool: &SqlitePool, limit: Option<i64>) -> Result<Ve
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| r.into()).collect())
+    enrich_records(pool, rows).await
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceContext {
+    pub device_id: String,
+    pub mode: String,
+    pub requires_checkin: bool,
+    pub class_id: Option<String>,
+}
+
+pub async fn attendance_context(pool: &SqlitePool, device_id: &str) -> Result<AttendanceContext> {
+    let row = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT current_mode, class_id FROM student_devices WHERE id = ?"
+    )
+    .bind(device_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("设备未注册"))?;
+
+    let (mode, class_id) = row;
+    let requires_checkin = matches!(mode.as_str(), "open" | "teaching");
+
+    Ok(AttendanceContext {
+        device_id: device_id.to_string(),
+        mode,
+        requires_checkin,
+        class_id,
+    })
 }
 
 #[cfg(test)]
@@ -296,6 +384,40 @@ mod tests {
         let records = list_attendance(&pool, None).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].remarks.as_deref(), Some("补签"));
-        assert_eq!(records[0].check_in_time, "2026-08-28 09:00:00");
+        assert_eq!(records[0].check_in_time, "2026-08-28T09:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn teaching_check_in_requires_matching_seat() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-SEAT-001").await;
+        let student_id = create_test_student(&pool, "STU-SEAT-001").await;
+
+        crate::domain::device::update_device_mode(&pool, &device_id, "teaching").await.unwrap();
+        sqlx::query("UPDATE student_devices SET seat_no = '5' WHERE id = ?").bind(&device_id).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE students SET seat_no = '5' WHERE id = ?").bind(&student_id).execute(&pool).await.unwrap();
+
+        check_in(&pool, &device_id, Some(&student_id), Some(1_700_000_000)).await.unwrap();
+        let records = list_attendance(&pool, None).await.unwrap();
+        assert_eq!(records[0].seat_no.as_deref(), Some("5"));
+        assert_eq!(records[0].student_no.as_deref(), Some("STU-SEAT-001"));
+
+        // 座位不匹配时拒绝
+        sqlx::query("UPDATE students SET seat_no = '6' WHERE id = ?").bind(&student_id).execute(&pool).await.unwrap();
+        assert!(check_in(&pool, &device_id, Some(&student_id), Some(1_700_000_001)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn attendance_context_flags_checkin_requirement() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-CTX-001").await;
+
+        let ctx = attendance_context(&pool, &device_id).await.unwrap();
+        assert_eq!(ctx.mode, "open");
+        assert!(ctx.requires_checkin);
+
+        crate::domain::device::update_device_mode(&pool, &device_id, "locked").await.unwrap();
+        let ctx = attendance_context(&pool, &device_id).await.unwrap();
+        assert!(!ctx.requires_checkin);
     }
 }

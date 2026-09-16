@@ -71,6 +71,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { listDevices, type Device } from '@/api/devices'
+import { formatDateTime, isStale } from '@/utils/time'
 
 const devices = ref<Device[]>([])
 const loading = ref(false)
@@ -90,18 +91,9 @@ const loadDevices = async () => {
   }
 }
 
-const isLate = (time: string | null) => {
-  if (!time) return true
-  const lastSeen = new Date(time).getTime()
-  const now = new Date().getTime()
-  return (now - lastSeen) > 30000
-}
+const isLate = (time: string | null) => isStale(time, 30000)
 
-const formatTime = (time: string | null) => {
-  if (!time) return '-'
-  const date = new Date(time)
-  return date.toLocaleTimeString('zh-CN')
-}
+const formatTime = (time: string | null) => formatDateTime(time)
 
 const modeLabel = (mode: string) => {
   const map: Record<string, string> = {

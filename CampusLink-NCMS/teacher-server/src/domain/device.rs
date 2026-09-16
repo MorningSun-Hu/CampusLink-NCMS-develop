@@ -19,6 +19,9 @@ pub struct DeviceRow {
     pub last_seen_at: Option<String>,
     pub current_mode: String,
     pub agent_version: Option<String>,
+    pub class_id: Option<String>,
+    pub seat_no: Option<String>,
+    pub pending_checkin: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -35,6 +38,9 @@ pub struct DeviceResponse {
     pub online_status: String,
     pub current_mode: String,
     pub last_seen_at: Option<String>,
+    pub class_id: Option<String>,
+    pub class_name: Option<String>,
+    pub seat_no: Option<String>,
 }
 
 impl From<DeviceRow> for DeviceResponse {
@@ -48,7 +54,10 @@ impl From<DeviceRow> for DeviceResponse {
             register_status: row.register_status,
             online_status: row.online_status,
             current_mode: row.current_mode,
-            last_seen_at: row.last_seen_at,
+            last_seen_at: crate::domain::time_util::to_rfc3339_opt(row.last_seen_at.as_deref()),
+            class_id: row.class_id,
+            class_name: None,
+            seat_no: row.seat_no,
         }
     }
 }
@@ -74,9 +83,9 @@ pub async fn register_device(pool: &SqlitePool, device_code: &str, machine_finge
         return Err(anyhow::anyhow!("设备 {} 未在白名单中", device_code));
     }
 
-    let device_id = Uuid::new_v4().to_string();
+    let candidate_id = Uuid::new_v4().to_string();
     let device_name = hostname.to_string();
-    
+
     sqlx::query(
         r#"
         INSERT INTO student_devices 
@@ -84,11 +93,17 @@ pub async fn register_device(pool: &SqlitePool, device_code: &str, machine_finge
          register_status, online_status, current_mode, agent_version, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'verified', 'offline', 'open', ?, datetime('now'), datetime('now'))
         ON CONFLICT(device_code) DO UPDATE SET
+            device_name = excluded.device_name,
+            machine_fingerprint = excluded.machine_fingerprint,
+            hostname = excluded.hostname,
+            ip_address = excluded.ip_address,
+            mac_address = excluded.mac_address,
+            agent_version = excluded.agent_version,
             last_seen_at = datetime('now'),
             updated_at = datetime('now')
         "#
     )
-    .bind(&device_id)
+    .bind(&candidate_id)
     .bind(device_code)
     .bind(&device_name)
     .bind(machine_fingerprint)
@@ -98,6 +113,14 @@ pub async fn register_device(pool: &SqlitePool, device_code: &str, machine_finge
     .bind(agent_version)
     .execute(pool)
     .await?;
+
+    // On conflict the pre-generated id is not persisted, so always read back the
+    // authoritative id for this device_code. Returning the candidate id here would
+    // make re-registration break every later operation keyed on the device id.
+    let device_id: String = sqlx::query_scalar("SELECT id FROM student_devices WHERE device_code = ?")
+        .bind(device_code)
+        .fetch_one(pool)
+        .await?;
 
     let teacher_fingerprint = crate::infrastructure::device_repository::get_config_value_string(pool, "teacher_fingerprint").await?.unwrap_or_else(|| "pending_init".to_string());
     let heartbeat_interval = crate::infrastructure::device_repository::get_config_value_u32(pool, "heartbeat_interval_seconds").await?.unwrap_or(15);
@@ -112,7 +135,106 @@ pub async fn list_devices(pool: &SqlitePool) -> Result<Vec<DeviceResponse>> {
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| r.into()).collect())
+    let mut devices = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut response: DeviceResponse = row.into();
+        if let Some(cid) = response.class_id.as_deref() {
+            response.class_name = sqlx::query_scalar::<_, String>("SELECT name FROM classes WHERE id = ?")
+                .bind(cid)
+                .fetch_optional(pool)
+                .await?;
+        }
+        devices.push(response);
+    }
+    Ok(devices)
+}
+
+pub async fn list_devices_by_class(pool: &SqlitePool, class_id: &str) -> Result<Vec<DeviceResponse>> {
+    let rows = sqlx::query_as::<_, DeviceRow>(
+        "SELECT * FROM student_devices WHERE class_id = ? ORDER BY seat_no ASC"
+    )
+    .bind(class_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut devices = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut response: DeviceResponse = row.into();
+        if let Some(cid) = response.class_id.as_deref() {
+            response.class_name = sqlx::query_scalar::<_, String>("SELECT name FROM classes WHERE id = ?")
+                .bind(cid)
+                .fetch_optional(pool)
+                .await?;
+        }
+        devices.push(response);
+    }
+    Ok(devices)
+}
+
+pub async fn set_device_class(pool: &SqlitePool, device_id: &str, class_id: Option<&str>) -> Result<()> {
+    sqlx::query("UPDATE student_devices SET class_id = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(class_id)
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_device_seat(pool: &SqlitePool, device_id: &str, seat_no: Option<&str>) -> Result<()> {
+    sqlx::query("UPDATE student_devices SET seat_no = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(seat_no)
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_pending_checkin(pool: &SqlitePool, device_id: &str, pending: bool) -> Result<()> {
+    sqlx::query("UPDATE student_devices SET pending_checkin = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(if pending { 1 } else { 0 })
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn consume_pending_checkin(pool: &SqlitePool, device_id: &str) -> Result<bool> {
+    let pending: Option<i64> = sqlx::query_scalar::<_, i64>("SELECT pending_checkin FROM student_devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(pool)
+        .await?;
+    if pending == Some(1) {
+        set_pending_checkin(pool, device_id, false).await?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+pub async fn get_device_seat(pool: &SqlitePool, device_id: &str) -> Result<Option<String>> {
+    let seat: Option<String> = sqlx::query_scalar("SELECT seat_no FROM student_devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(seat)
+}
+
+pub async fn list_online_devices_by_class(pool: &SqlitePool, class_id: &str) -> Result<Vec<String>> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM student_devices WHERE class_id = ? AND online_status = 'online'"
+    )
+    .bind(class_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(ids)
+}
+
+pub async fn is_online(pool: &SqlitePool, device_id: &str) -> Result<bool> {
+    let status: Option<String> = sqlx::query_scalar("SELECT online_status FROM student_devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(status.as_deref() == Some("online"))
 }
 
 pub async fn device_exists(pool: &SqlitePool, device_id: &str) -> Result<bool> {
@@ -269,6 +391,42 @@ mod tests {
 
         assert!(device_exists(&pool, &device_id).await.unwrap());
         assert!(!device_exists(&pool, "nonexistent-id").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn re_register_same_device_code_keeps_stable_id() {
+        let pool = setup_pool().await;
+        let (first_id, _, _, _) = register_device(
+            &pool,
+            "DEV-REG-DUP",
+            "fp-dup-1",
+            "host-dup-1",
+            "192.168.1.20",
+            "aa:aa:aa",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+        let (second_id, _, _, _) = register_device(
+            &pool,
+            "DEV-REG-DUP",
+            "fp-dup-2",
+            "host-dup-2",
+            "192.168.1.21",
+            "bb:bb:bb",
+            "test-agent-2",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first_id, second_id);
+        assert!(device_exists(&pool, &second_id).await.unwrap());
+        let ip: String = sqlx::query_scalar("SELECT ip_address FROM student_devices WHERE device_code = ?")
+            .bind("DEV-REG-DUP")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ip, "192.168.1.21");
     }
 
     #[tokio::test]

@@ -8,6 +8,9 @@ export interface Device {
   onlineStatus: string
   currentMode: string
   lastSeenAt: string | null
+  classId: string | null
+  className: string | null
+  seatNo: string | null
 }
 
 export interface RegisterDeviceRequest {
@@ -53,11 +56,14 @@ export interface AttendanceStatistics {
 export interface AttendanceRecord {
   id: string
   student_id: string | null
+  student_no: string | null
+  student_name: string | null
   device_id: string
   check_in_time: string
   check_out_time: string | null
   status: string
   remarks: string | null
+  seat_no: string | null
 }
 
 export interface InspectionRecord {
