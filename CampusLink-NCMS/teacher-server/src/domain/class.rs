@@ -234,9 +234,80 @@ pub async fn auto_seats_by_ip(pool: &SqlitePool, class_id: &str) -> Result<AutoS
     })
 }
 
-pub async fn switch_class_mode(pool: &SqlitePool, class_id: &str, target_mode: &str) -> Result<Vec<String>> {
-    if target_mode == "teaching" && !has_students(pool, class_id).await? {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassModeResult {
+    pub device_ids: Vec<String>,
+    pub teaching_device_ids: Vec<String>,
+    pub locked_device_ids: Vec<String>,
+}
+
+pub async fn class_student_seats(pool: &SqlitePool, class_id: &str) -> Result<Vec<String>> {
+    let seats = sqlx::query_scalar::<_, String>(
+        "SELECT seat_no FROM students WHERE class_id = ? AND seat_no IS NOT NULL AND TRIM(seat_no) != ''"
+    )
+    .bind(class_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(seats)
+}
+
+fn seat_matches(device_seat: &Option<String>, student_seats: &[String]) -> bool {
+    match device_seat {
+        Some(s) if !s.trim().is_empty() => student_seats.iter().any(|x| x.trim() == s.trim()),
+        _ => false,
+    }
+}
+
+pub async fn teaching_target_for_device(pool: &SqlitePool, class_id: &str, device_id: &str) -> Result<String> {
+    if !has_students(pool, class_id).await? {
         anyhow::bail!("请先补充学生信息");
+    }
+
+    let device_seat: Option<String> = sqlx::query_scalar("SELECT seat_no FROM student_devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+    let student_seats = class_student_seats(pool, class_id).await?;
+
+    Ok(if seat_matches(&device_seat, &student_seats) { "teaching" } else { "locked" }.to_string())
+}
+
+pub async fn switch_class_mode(pool: &SqlitePool, class_id: &str, target_mode: &str) -> Result<ClassModeResult> {
+    if target_mode == "teaching" {
+        if !has_students(pool, class_id).await? {
+            anyhow::bail!("请先补充学生信息");
+        }
+
+        let rows = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, seat_no FROM student_devices WHERE class_id = ?"
+        )
+        .bind(class_id)
+        .fetch_all(pool)
+        .await?;
+        let student_seats = class_student_seats(pool, class_id).await?;
+
+        let mut teaching_device_ids = Vec::new();
+        let mut locked_device_ids = Vec::new();
+        for (device_id, seat_no) in rows {
+            let _ = crate::domain::usage::close_open_session(pool, &device_id).await;
+            let effective = if seat_matches(&seat_no, &student_seats) { "teaching" } else { "locked" };
+            sqlx::query("UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?")
+                .bind(effective)
+                .bind(&device_id)
+                .execute(pool)
+                .await?;
+            if effective == "teaching" {
+                teaching_device_ids.push(device_id);
+            } else {
+                locked_device_ids.push(device_id);
+            }
+        }
+
+        let mut device_ids = teaching_device_ids.clone();
+        device_ids.extend(locked_device_ids.iter().cloned());
+        return Ok(ClassModeResult { device_ids, teaching_device_ids, locked_device_ids });
     }
 
     let device_ids: Vec<String> = sqlx::query_scalar("SELECT id FROM student_devices WHERE class_id = ?")
@@ -245,6 +316,7 @@ pub async fn switch_class_mode(pool: &SqlitePool, class_id: &str, target_mode: &
         .await?;
 
     for did in &device_ids {
+        let _ = crate::domain::usage::close_open_session(pool, did).await;
         sqlx::query("UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?")
             .bind(target_mode)
             .bind(did)
@@ -252,7 +324,11 @@ pub async fn switch_class_mode(pool: &SqlitePool, class_id: &str, target_mode: &
             .await?;
     }
 
-    Ok(device_ids)
+    Ok(ClassModeResult {
+        device_ids,
+        teaching_device_ids: Vec::new(),
+        locked_device_ids: Vec::new(),
+    })
 }
 
 #[cfg(test)]
@@ -277,7 +353,9 @@ mod tests {
         let did = register_test_device(&pool, "DEV-CLASS-1").await;
         assign_devices(&pool, &class.id, &[did.clone()]).await.unwrap();
         let switched = switch_class_mode(&pool, &class.id, "teaching").await.unwrap();
-        assert_eq!(switched, vec![did.clone()]);
+        assert_eq!(switched.device_ids, vec![did.clone()]);
+        assert!(switched.teaching_device_ids.is_empty());
+        assert_eq!(switched.locked_device_ids, vec![did.clone()]);
 
         batch_set_seats(&pool, &class.id, &[SeatAssignment { device_id: did.clone(), seat_no: "10".into() }])
             .await

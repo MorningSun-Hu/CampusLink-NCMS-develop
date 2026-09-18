@@ -55,15 +55,77 @@ export interface AttendanceStatistics {
 
 export interface AttendanceRecord {
   id: string
-  student_id: string | null
-  student_no: string | null
-  student_name: string | null
-  device_id: string
-  check_in_time: string
-  check_out_time: string | null
+  studentId: string | null
+  studentNo: string | null
+  studentName: string | null
+  deviceId: string
+  deviceName: string | null
+  classId: string | null
+  className: string | null
+  checkInTime: string
+  checkOutTime: string | null
   status: string
   remarks: string | null
-  seat_no: string | null
+  seatNo: string | null
+  usageRecordId?: string | null
+}
+
+export interface AttendanceQuery {
+  classId?: string
+  startDate?: string
+  endDate?: string
+  studentKeyword?: string
+  status?: string
+}
+
+export interface BoardStudent {
+  studentId: string
+  studentNo: string
+  studentName: string
+  seatNo: string | null
+  deviceId: string | null
+  deviceName: string | null
+  checkInTime: string | null
+  status: string
+}
+
+export interface AttendanceBoard {
+  classId: string | null
+  className: string | null
+  date: string
+  totalStudents: number
+  presentCount: number
+  absentCount: number
+  attendanceRate: number
+  present: BoardStudent[]
+  absent: BoardStudent[]
+}
+
+export interface UsageRecord {
+  id: string
+  deviceId: string
+  deviceName: string | null
+  classId: string | null
+  className: string | null
+  seatNo: string | null
+  studentId: string | null
+  studentNo: string | null
+  studentName: string | null
+  userName: string
+  mode: string
+  startTime: string
+  endTime: string | null
+  durationSeconds: number | null
+  inspectionOk: boolean
+  inspectionSummary: string | null
+}
+
+export interface UsageQuery {
+  deviceId?: string
+  classId?: string
+  studentKeyword?: string
+  startDate?: string
+  endDate?: string
 }
 
 export interface InspectionRecord {

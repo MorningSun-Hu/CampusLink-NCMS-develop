@@ -34,6 +34,11 @@ const router = createRouter({
           component: () => import('@/views/Attendance.vue'),
         },
         {
+          path: 'usage',
+          name: 'Usage',
+          component: () => import('@/views/Usage.vue'),
+        },
+        {
           path: 'alerts',
           name: 'Alerts',
           component: () => import('@/views/Alerts.vue'),

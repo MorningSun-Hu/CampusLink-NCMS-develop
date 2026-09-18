@@ -381,9 +381,19 @@ async function resetPasswords() {
 async function changeMode(mode: string) {
   if (!selected.value) return
   try {
-    await switchClassMode(selected.value.id, mode)
+    const res = await switchClassMode(selected.value.id, mode)
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '切换失败')
+      return
+    }
     selectedMode.value = mode
-    ElMessage.success(`已切换到${modeLabel(mode)}`)
+    const teachingCount = res.data?.teachingCount ?? 0
+    const lockedCount = res.data?.lockedCount ?? 0
+    if (mode === 'teaching') {
+      ElMessage.success(`授课模式完成：${teachingCount} 台进入授课，${lockedCount} 台进入锁定`)
+    } else {
+      ElMessage.success(`已切换到${modeLabel(mode)}`)
+    }
     await loadDetail()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || e?.message || '切换失败')

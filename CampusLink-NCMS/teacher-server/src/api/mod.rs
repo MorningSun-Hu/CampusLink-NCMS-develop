@@ -13,6 +13,7 @@ mod whitelist_handlers;
 mod repair_handlers;
 mod network_account_handlers;
 mod class_handlers;
+mod usage_handlers;
 
 use axum::{routing::{get, post, delete, put}, Router, middleware};
 use axum::response::Html;
@@ -21,7 +22,8 @@ use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
 
 use handlers::{register_device_handler, list_devices_handler, mode_switch_handler, ws_handler, lock_screen_handler, unlock_handler, AppState};
-use attendance_handlers::{check_in_handler, statistics_handler, retroactive_handler, list_attendance_handler, export_attendance_handler, attendance_context_handler};
+use attendance_handlers::{check_in_handler, statistics_handler, retroactive_handler, list_attendance_handler, export_attendance_handler, attendance_context_handler, attendance_board_handler};
+use usage_handlers::{list_usage_handler, export_usage_handler, end_usage_handler, close_usage_handler};
 use inspection_handlers::{submit_inspection_handler, list_inspections_handler, list_alerts_handler, resolve_alert_handler, export_inspection_handler};
 use photo_handlers::{upload_photo_handler, get_photo_handler, list_photos_handler};
 use hardware_handlers::{submit_snapshot_handler, get_snapshot_handler, list_changes_handler};
@@ -96,6 +98,7 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/devices/register", post(register_device_handler))
         // Student agent report endpoints: authenticated by device_id (registered device)
         .route("/api/attendance/check-in", post(check_in_handler))
+        .route("/api/usage/close", post(close_usage_handler))
         .route("/api/attendance/context", get(attendance_context_handler))
         .route("/api/inspection/submit", post(submit_inspection_handler))
         .route("/api/hardware/snapshot", post(submit_snapshot_handler))
@@ -111,7 +114,11 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/attendance/statistics", get(statistics_handler))
         .route("/api/attendance/retroactive", post(retroactive_handler))
         .route("/api/attendance", get(list_attendance_handler))
+        .route("/api/attendance/board", get(attendance_board_handler))
         .route("/api/attendance/export", get(export_attendance_handler))
+        .route("/api/usage", get(list_usage_handler))
+        .route("/api/usage/export", get(export_usage_handler))
+        .route("/api/usage/:id/end", post(end_usage_handler))
         .route("/api/inspection", get(list_inspections_handler))
         .route("/api/inspection/export", get(export_inspection_handler))
         .route("/api/alerts", get(list_alerts_handler))

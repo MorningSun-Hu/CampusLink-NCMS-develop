@@ -1,9 +1,17 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use tracing::{info, warn};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+use tracing::{info, warn, error};
 
 use crate::config::Config;
+
+static ADMISSION_GEN: AtomicU64 = AtomicU64::new(0);
+
+const EXIT_OK: i32 = 0;
+const EXIT_TEACHER: i32 = 10;
 
 #[derive(Debug, Serialize)]
 pub struct CheckInRequest {
@@ -61,62 +69,125 @@ pub async fn check_in_auto(config: &Config) -> Result<()> {
     }
 }
 
-/// Performs an interactive check-in for modes that require user input.
-///
-/// Mode-based check-in rules:
-/// - open: launch campus-checkin so the user can enter their name
-/// - teaching: launch campus-checkin which strictly verifies the student
-///   account (student_no + password) before checking in
-/// - exam / locked: no check-in required, returns Ok immediately
-pub async fn check_in_interactive(config: &Config) -> Result<()> {
-    let mode = config.current_mode.as_str();
-    if mode != "open" && mode != "teaching" {
-        info!("Mode {} does not require check-in, skipping", mode);
-        return Ok(());
-    }
-
-    let exe_dir = std::env::current_exe()
+fn resolve_checkin_exe() -> PathBuf {
+    let dir = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-    let checkin_exe = match &exe_dir {
-        Some(dir) => dir.join("campus-checkin.exe"),
-        None => std::path::PathBuf::from("campus-checkin.exe"),
-    };
-
-    if !checkin_exe.exists() {
-        warn!("campus-checkin.exe not found at: {:?}, falling back to auto check-in", checkin_exe);
-        return check_in_auto(config).await;
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let win = dir.join("campus-checkin.exe");
+    if win.exists() {
+        return win;
     }
+    dir.join("campus-checkin")
+}
 
-    let server_url = config.teacher_server_url.clone();
-    let device_id = config.device_id.clone().unwrap_or_default();
-
-    info!("Launching campus-checkin (mode={}) at {:?}", mode, checkin_exe);
-    let mut child = match Command::new(&checkin_exe)
-        .arg(&server_url)
-        .arg(&device_id)
-        .arg(mode)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+fn kill_checkin_process() {
+    #[cfg(target_os = "windows")]
     {
-        Ok(child) => child,
-        Err(e) => {
-            warn!("Failed to start campus-checkin: {}, falling back to auto check-in", e);
-            return check_in_auto(config).await;
-        }
-    };
-
-    let status = tokio::task::spawn_blocking(move || child.wait())
-        .await
-        .map_err(|e| anyhow::anyhow!("Join error waiting for campus-checkin: {}", e))??;
-
-    if status.success() {
-        info!("Interactive check-in succeeded (campus-checkin exit 0)");
-        Ok(())
-    } else {
-        warn!("Interactive check-in was not completed (exit {:?})", status.code());
-        Ok(())
+        let _ = Command::new("taskkill")
+            .args(["/IM", "campus-checkin.exe", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = Command::new("pkill")
+            .arg("-f")
+            .arg("campus-checkin")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+}
+
+pub fn stop_admission_monitor() {
+    ADMISSION_GEN.fetch_add(1, Ordering::SeqCst);
+    kill_checkin_process();
+}
+
+/// Launch (or restart) the fullscreen admission UI and keep relaunching until
+/// check-in completes, the teacher unlocks, or a newer monitor generation starts.
+pub fn start_admission_monitor(config: Config) {
+    let mode = config.current_mode.clone();
+    if mode != "open" && mode != "teaching" {
+        info!("Mode {} does not require admission, skipping", mode);
+        return;
+    }
+
+    let gen = ADMISSION_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    kill_checkin_process();
+
+    tokio::spawn(async move {
+        info!("Admission monitor started (gen={}, mode={})", gen, mode);
+        loop {
+            if ADMISSION_GEN.load(Ordering::SeqCst) != gen {
+                info!("Admission monitor gen={} cancelled", gen);
+                break;
+            }
+
+            let exe = resolve_checkin_exe();
+            if !exe.exists() {
+                warn!("campus-checkin not found at {:?}, retrying", exe);
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                continue;
+            }
+
+            let server_url = config.teacher_server_url.clone();
+            let device_id = config.device_id.clone().unwrap_or_default();
+            let lock_password = config.lock_password.clone().unwrap_or_else(|| "admin123".to_string());
+            let run_mode = config.current_mode.clone();
+            let exe_clone = exe.clone();
+
+            info!("Launching campus-checkin (mode={}) at {:?}", run_mode, exe_clone);
+            let wait_result = tokio::task::spawn_blocking(move || {
+                let mut child = Command::new(&exe_clone)
+                    .arg(&server_url)
+                    .arg(&device_id)
+                    .arg(&run_mode)
+                    .arg(&lock_password)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()?;
+                child.wait()
+            })
+            .await;
+
+            if ADMISSION_GEN.load(Ordering::SeqCst) != gen {
+                info!("Admission monitor gen={} cancelled after process exit", gen);
+                break;
+            }
+
+            match wait_result {
+                Ok(Ok(status)) => {
+                    let code = status.code();
+                    if code == Some(EXIT_OK) {
+                        info!("Admission completed (exit 0)");
+                        break;
+                    }
+                    if code == Some(EXIT_TEACHER) {
+                        info!("Admission unlocked by teacher super password (exit 10)");
+                        break;
+                    }
+                    warn!("campus-checkin exited unexpectedly ({:?}), relaunching", code);
+                }
+                Ok(Err(e)) => {
+                    error!("Failed to start campus-checkin: {}", e);
+                }
+                Err(e) => {
+                    error!("Join error waiting for campus-checkin: {}", e);
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        info!("Admission monitor gen={} stopped", gen);
+    });
+}
+
+/// Backward-compatible wrapper used by existing call sites.
+pub async fn check_in_interactive(config: &Config) -> Result<()> {
+    start_admission_monitor(config.clone());
+    Ok(())
 }

@@ -24,6 +24,11 @@
               <span>签到管理</span>
             </div>
           </router-link>
+          <router-link to="/usage" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>设备使用</span>
+            </div>
+          </router-link>
           <router-link to="/alerts" custom v-slot="{ navigate, isActive }">
             <div class="menu-item" :class="{ active: isActive }" @click="navigate">
               <span>检查告警</span>

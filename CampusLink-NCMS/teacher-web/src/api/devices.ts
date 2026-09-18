@@ -13,8 +13,22 @@ export async function listDevices(onlineStatus?: string) {
   return response.data
 }
 
-export async function switchDeviceMode(deviceId: string, targetMode: string, operatorName: string) {
-  const response = await api.post(`/devices/${deviceId}/mode`, { device_id: deviceId, target_mode: targetMode, operator_name: operatorName })
+export interface ModeSwitchResult {
+  command_id?: string
+  device_id?: string
+  target_mode?: string
+  effectiveMode?: string
+  admissionBlocked?: boolean
+  delivery_status?: string
+}
+
+export async function switchDeviceMode(deviceId: string, targetMode: string, operatorName: string, classId?: string) {
+  const response = await api.post(`/devices/${deviceId}/mode`, {
+    device_id: deviceId,
+    target_mode: targetMode,
+    operator_name: operatorName,
+    class_id: classId,
+  })
   return response.data
 }
 

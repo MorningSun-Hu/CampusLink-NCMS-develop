@@ -200,15 +200,32 @@ pub async fn switch_class_mode_handler(
     }
 
     match class::switch_class_mode(&state.pool, &id, &req.target_mode).await {
-        Ok(device_ids) => {
-            if requires_checkin(&req.target_mode) {
-                dispatch_checkin_trigger(&state, &device_ids).await;
+        Ok(result) => {
+            let checkin_device_ids: Vec<String> = if req.target_mode == "teaching" {
+                result.teaching_device_ids.clone()
+            } else if requires_checkin(&req.target_mode) {
+                result.device_ids.clone()
+            } else {
+                Vec::new()
+            };
+            if !checkin_device_ids.is_empty() {
+                dispatch_checkin_trigger(&state, &checkin_device_ids).await;
             }
-            info!("Class {} switched to {} ({} devices)", id, req.target_mode, device_ids.len());
+            info!(
+                "Class {} switched to {} (teaching: {}, locked: {})",
+                id,
+                req.target_mode,
+                result.teaching_device_ids.len(),
+                result.locked_device_ids.len()
+            );
             Json(ApiResponse::success(serde_json::json!({
                 "classId": id,
                 "targetMode": req.target_mode,
-                "affectedDevices": device_ids.len(),
+                "affectedDevices": result.device_ids.len(),
+                "teachingDeviceIds": result.teaching_device_ids,
+                "lockedDeviceIds": result.locked_device_ids,
+                "teachingCount": result.teaching_device_ids.len(),
+                "lockedCount": result.locked_device_ids.len(),
             })))
         }
         Err(e) => {

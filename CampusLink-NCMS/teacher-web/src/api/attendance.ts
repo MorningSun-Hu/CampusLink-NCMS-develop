@@ -1,5 +1,11 @@
 import api from './http'
-import type { ApiResponse, AttendanceRecord, AttendanceStatistics } from './types'
+import type {
+  ApiResponse,
+  AttendanceRecord,
+  AttendanceStatistics,
+  AttendanceQuery,
+  AttendanceBoard,
+} from './types'
 
 export interface RetroactiveParams {
   student_id: string
@@ -8,13 +14,18 @@ export interface RetroactiveParams {
   remarks?: string
 }
 
-export async function getAttendanceList() {
-  const response = await api.get<ApiResponse<AttendanceRecord[]>>('/attendance')
+export async function getAttendanceList(params?: AttendanceQuery) {
+  const response = await api.get<ApiResponse<AttendanceRecord[]>>('/attendance', { params })
   return response.data
 }
 
 export async function getAttendanceStatistics(date?: string) {
   const response = await api.get<ApiResponse<AttendanceStatistics>>('/attendance/statistics', { params: { date } })
+  return response.data
+}
+
+export async function getAttendanceBoard(params: { classId?: string; date?: string }) {
+  const response = await api.get<ApiResponse<AttendanceBoard>>('/attendance/board', { params })
   return response.data
 }
 
@@ -35,6 +46,7 @@ export async function getAttendanceContext(deviceId: string) {
   return response.data
 }
 
-export function getExportAttendanceUrl() {
-  return '/api/attendance/export'
+export async function exportAttendance(params?: AttendanceQuery) {
+  const response = await api.get('/attendance/export', { params, responseType: 'blob' })
+  return response.data as Blob
 }

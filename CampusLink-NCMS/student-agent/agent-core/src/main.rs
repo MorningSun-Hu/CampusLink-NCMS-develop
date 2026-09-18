@@ -79,9 +79,7 @@ async fn main() -> Result<()> {
         warn!("Hardware snapshot submit failed: {}", e);
     }
 
-    if let Err(e) = attendance::check_in_interactive(&config).await {
-        warn!("Check-in failed: {}", e);
-    }
+    attendance::start_admission_monitor(config.clone());
 
     let policies = process_guard::sync_policies(&config).await;
     let _alerts = process_guard::check_and_restart(&policies);

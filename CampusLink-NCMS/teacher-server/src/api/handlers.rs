@@ -71,6 +71,8 @@ pub struct ModeSwitchRequest {
     pub target_mode: String,
     pub device_id: String,
     pub operator_name: String,
+    #[serde(default, alias = "classId")]
+    pub class_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,6 +80,10 @@ pub struct ModeSwitchResponse {
     pub command_id: String,
     pub device_id: String,
     pub target_mode: String,
+    #[serde(rename = "effectiveMode")]
+    pub effective_mode: String,
+    #[serde(rename = "admissionBlocked")]
+    pub admission_blocked: bool,
     pub delivery_status: String,
 }
 
@@ -160,10 +166,17 @@ pub async fn mode_switch_handler(
             format!("非法模式: {}（可选: open/teaching/exam/locked）", req.target_mode),
         ));
     }
-    match device::switch_device_mode(&state.pool, &req.device_id, &req.target_mode, &req.operator_name).await {
-        Ok(command_id) => {
+    match device::switch_device_mode(
+        &state.pool,
+        &req.device_id,
+        &req.target_mode,
+        &req.operator_name,
+        req.class_id.as_deref(),
+    ).await {
+        Ok(outcome) => {
+            let effective_mode = outcome.effective_mode.clone();
             let msg = format!(r#"{{"type":"mode_switch","device_id":"{}","mode":"{}","operator":"{}","timestamp":{}}}"#, 
-                req.device_id, req.target_mode, req.operator_name,
+                req.device_id, effective_mode, req.operator_name,
                 chrono::Utc::now().timestamp());
 
             // Encode as protobuf binary for efficient transport
@@ -173,9 +186,9 @@ pub async fn mode_switch_handler(
                     timestamp: chrono::Utc::now().timestamp(),
                     protocol_version: "1.0.0".to_string(),
                 }),
-                command_id,
+                command_id: outcome.command_id.clone(),
                 target_device_id: req.device_id.clone(),
-                target_mode: match req.target_mode.as_str() {
+                target_mode: match effective_mode.as_str() {
                     "open" => 0, "teaching" => 1, "exam" => 3, "locked" => 4,
                     _ => 0,
                 },
@@ -187,20 +200,22 @@ pub async fn mode_switch_handler(
             let _ = state.ws_tx.send(msg);
             let _ = state.ws_tx.send(format!("proto:{}", base64_encode(&proto_bytes)));
 
-            if requires_checkin(&req.target_mode) {
+            if requires_checkin(&effective_mode) {
                 dispatch_checkin_trigger(&state, &[req.device_id.clone()]).await;
             }
 
             Json(ApiResponse::success(ModeSwitchResponse {
-                command_id: uuid::Uuid::new_v4().to_string(),
+                command_id: outcome.command_id,
                 device_id: req.device_id.clone(),
                 target_mode: req.target_mode.clone(),
+                effective_mode,
                 delivery_status: "sent".to_string(),
+                admission_blocked: outcome.admission_blocked,
             }))
         }
         Err(e) => {
             error!("Mode switch failed: {}", e);
-            Json(ApiResponse::error(500, "模式切换失败".to_string()))
+            Json(ApiResponse::error(400, e.to_string()))
         }
     }
 }

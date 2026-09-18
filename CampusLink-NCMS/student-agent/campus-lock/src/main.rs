@@ -33,7 +33,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let super_password = if args.len() >= 2 {
         args[1].clone()
     } else {
-        let msg = "Usage: campus-lock <super_password>";
+        let msg = "用法: campus-lock <超级密码>";
         let _ = writeln!(std::io::stderr(), "{}", msg);
         return Err(msg.into());
     };
@@ -54,13 +54,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     eframe::run_native(
         "CampusLock",
         options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
             let _ = writeln!(std::io::stderr(), "campus-lock: creating LockApp");
+            setup_cjk_fonts(&cc.egui_ctx);
             Ok(Box::new(LockApp::new(super_password.clone())))
         }),
     )?;
 
     Ok(())
+}
+
+fn setup_cjk_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    let candidates = [
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\msyhbd.ttc",
+        "C:\\Windows\\Fonts\\simhei.ttf",
+        "C:\\Windows\\Fonts\\simsun.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    ];
+    for path in candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert("cjk".to_owned(), egui::FontData::from_owned(bytes).into());
+            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "cjk".to_owned());
+            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "cjk".to_owned());
+            ctx.set_fonts(fonts);
+            return;
+        }
+    }
 }
 
 struct LockApp {
@@ -69,6 +91,7 @@ struct LockApp {
     attempts: u32,
     max_attempts: u32,
     message: String,
+    success: bool,
     unlocked: Arc<Mutex<bool>>,
 }
 
@@ -80,119 +103,125 @@ impl LockApp {
             attempts: 0,
             max_attempts: 5,
             message: String::new(),
+            success: false,
             unlocked: Arc::new(Mutex::new(false)),
+        }
+    }
+
+    fn remaining(&self) -> u32 {
+        self.max_attempts.saturating_sub(self.attempts)
+    }
+
+    fn try_unlock(&mut self) {
+        if self.success {
+            return;
+        }
+        if self.password_input == self.super_password {
+            self.success = true;
+            self.message = "解锁成功，正在进入桌面".to_string();
+            *self.unlocked.lock().unwrap() = true;
+        } else {
+            self.attempts += 1;
+            self.password_input.clear();
+            let left = self.remaining();
+            if left == 0 {
+                self.message = "密码错误次数过多，请联系教师".to_string();
+            } else {
+                self.message = format!("密码错误，还可尝试 {} 次", left);
+            }
         }
     }
 }
 
 impl eframe::App for LockApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if *self.unlocked.lock().unwrap() {
+        if *self.unlocked.lock().unwrap() && self.success {
             std::process::exit(0);
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.25);
+        let bg = egui::Color32::from_rgb(12, 16, 24);
+        let title = egui::Color32::from_rgb(220, 70, 70);
+        let muted = egui::Color32::from_rgb(170, 176, 188);
+        let ok = egui::Color32::from_rgb(80, 210, 120);
+        let danger = egui::Color32::from_rgb(230, 80, 80);
 
-                ui.heading(
-                    egui::RichText::new("SCREEN LOCKED")
-                        .size(48.0)
-                        .color(egui::Color32::from_rgb(220, 50, 50)),
-                );
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(bg))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(ui.available_height() * 0.18);
 
-                ui.add_space(20.0);
-
-                ui.label(
-                    egui::RichText::new("This workstation has been locked by the campus management system.")
-                        .size(18.0)
-                        .color(egui::Color32::from_rgb(180, 180, 180)),
-                );
-
-                ui.add_space(10.0);
-
-                ui.label(
-                    egui::RichText::new("Enter the super password to unlock.")
-                        .size(16.0)
-                        .color(egui::Color32::from_rgb(150, 150, 150)),
-                );
-
-                ui.add_space(30.0);
-
-                let _password_response = ui.add_sized(
-                    [300.0, 40.0],
-                    egui::TextEdit::singleline(&mut self.password_input)
-                        .password(true)
-                        .hint_text("Password")
-                        .font(egui::TextStyle::Body),
-                );
-
-                ui.add_space(10.0);
-
-                if ui
-                    .add_sized([120.0, 36.0], egui::Button::new(
-                        egui::RichText::new("Unlock").size(16.0),
-                    ))
-                    .clicked()
-                {
-                    self.try_unlock();
-                    ctx.request_repaint();
-                }
-
-                if !self.message.is_empty() {
-                    ui.add_space(15.0);
-                    let color = if self.message.contains("granted") || self.message.contains("unlocked") {
-                        egui::Color32::from_rgb(50, 220, 50)
-                    } else {
-                        egui::Color32::from_rgb(220, 50, 50)
-                    };
-                    ui.label(
-                        egui::RichText::new(&self.message)
-                            .size(14.0)
-                            .color(color),
+                    // 标题区
+                    ui.heading(
+                        egui::RichText::new("屏幕已锁定")
+                            .size(44.0)
+                            .color(title),
                     );
-                }
 
-                ui.add_space(20.0);
+                    ui.add_space(18.0);
 
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Attempts: {}/{}",
-                        self.attempts, self.max_attempts
-                    ))
-                    .size(12.0)
-                    .color(egui::Color32::from_rgb(120, 120, 120)),
-                );
+                    // 说明区
+                    ui.label(
+                        egui::RichText::new("本机已被校园管理系统锁定")
+                            .size(18.0)
+                            .color(muted),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("请输入教师超级密码后解锁")
+                            .size(16.0)
+                            .color(egui::Color32::from_rgb(140, 148, 162)),
+                    );
+
+                    ui.add_space(28.0);
+
+                    // 密码输入区
+                    ui.add_sized(
+                        [320.0, 40.0],
+                        egui::TextEdit::singleline(&mut self.password_input)
+                            .password(true)
+                            .hint_text("请输入超级密码")
+                            .font(egui::TextStyle::Body),
+                    );
+
+                    ui.add_space(14.0);
+
+                    // 操作区
+                    if ui
+                        .add_sized(
+                            [160.0, 40.0],
+                            egui::Button::new(egui::RichText::new("解锁").size(16.0)),
+                        )
+                        .clicked()
+                    {
+                        self.try_unlock();
+                        ctx.request_repaint();
+                    }
+
+                    ui.add_space(18.0);
+
+                    // 状态区
+                    ui.label(
+                        egui::RichText::new(format!("剩余尝试次数：{}/{}", self.remaining(), self.max_attempts))
+                            .size(13.0)
+                            .color(egui::Color32::from_rgb(120, 128, 144)),
+                    );
+
+                    if !self.message.is_empty() {
+                        ui.add_space(10.0);
+                        let color = if self.success { ok } else { danger };
+                        ui.label(
+                            egui::RichText::new(&self.message)
+                                .size(15.0)
+                                .color(color),
+                        );
+                    }
+                });
             });
-        });
 
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.password_input.is_empty() {
             self.try_unlock();
             ctx.request_repaint();
-        }
-    }
-}
-
-impl LockApp {
-    fn try_unlock(&mut self) {
-        if self.password_input == self.super_password {
-            self.message = "Access granted. Screen unlocked.".to_string();
-            *self.unlocked.lock().unwrap() = true;
-        } else {
-            self.attempts += 1;
-            self.password_input.clear();
-
-            if self.attempts >= self.max_attempts {
-                self.message = format!(
-                    "Too many failed attempts. {} remaining.",
-                    self.max_attempts.saturating_sub(self.attempts)
-                );
-            } else {
-                self.message = format!(
-                    "Incorrect password. {} attempts remaining.",
-                    self.max_attempts - self.attempts
-                );
-            }
         }
     }
 }

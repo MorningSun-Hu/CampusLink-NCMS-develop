@@ -195,10 +195,7 @@ impl CommandHandler {
                     return Ok(());
                 }
                 info!("Received checkin trigger command, mode={}", self.config.current_mode);
-                if let Err(e) = crate::attendance::check_in_interactive(&self.config).await {
-                    warn!("Interactive check-in failed: {}", e);
-                    println!("\n[CHECK-IN FAILED] {}\n", e);
-                }
+                crate::attendance::start_admission_monitor(self.config.clone());
             }
 
             WebSocketCommand::HeartbeatAck { ack_code, message } => {

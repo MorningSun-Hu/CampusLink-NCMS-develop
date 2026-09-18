@@ -33,20 +33,23 @@ pub async fn handle_mode_switch(
     unlock_tx: &Option<mpsc::UnboundedSender<String>>,
 ) -> Result<()> {
     info!("Switching mode from {} to {}", config.current_mode, target_mode);
-    
+
+    crate::attendance::stop_admission_monitor();
+
     let parsed_mode = parse_mode(target_mode);
-    
-    // 执行模式对应的动作
+
     match parsed_mode {
         ModeType::Open => {
-            info!("Switching to Open mode - disabling all restrictions");
+            info!("Switching to Open mode - disabling locks, starting admission");
             disable_all_locks().await?;
             config.is_locked = false;
             config.lock_pid = None;
         }
         ModeType::Teaching => {
-            info!("Switching to Teaching mode - enabling screen lock");
-            enable_teaching_mode().await?;
+            info!("Switching to Teaching mode - starting admission");
+            disable_all_locks().await?;
+            config.is_locked = false;
+            config.lock_pid = None;
         }
         ModeType::Exam => {
             info!("Switching to Exam mode - enabling exam lockdown");
@@ -57,11 +60,14 @@ pub async fn handle_mode_switch(
             lock_completely(config, unlock_tx).await?;
         }
     }
-    
-    // 更新配置中的当前模式
+
     config.current_mode = target_mode.to_string();
     config.save()?;
-    
+
+    if matches!(parsed_mode, ModeType::Open | ModeType::Teaching) {
+        crate::attendance::start_admission_monitor(config.clone());
+    }
+
     info!("Mode switch completed: {}", target_mode);
     Ok(())
 }
@@ -85,12 +91,6 @@ async fn disable_all_locks() -> Result<()> {
             .stderr(Stdio::null())
             .spawn();
     }
-    Ok(())
-}
-
-/// 授课模式：锁定屏幕，跟随教师演示
-async fn enable_teaching_mode() -> Result<()> {
-    info!("Enabling Teaching mode - screen lock active");
     Ok(())
 }
 

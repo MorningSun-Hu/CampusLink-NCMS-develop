@@ -64,6 +64,11 @@
             <el-option label="锁定" value="locked" />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="modeForm.targetMode === 'teaching'" label="班级">
+          <el-select v-model="modeForm.classId" placeholder="请选择班级" filterable style="width: 100%">
+            <el-option v-for="c in classes" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="操作人">
           <el-input v-model="modeForm.operatorName" placeholder="请输入操作人姓名" />
         </el-form-item>
@@ -72,8 +77,8 @@
           type="warning"
           :closable="false"
           show-icon
-          title="授课模式需按班级批量切换"
-          description="授课模式会校验学生座位号与设备座位号一致，请在「班级管理」中选择班级后切换。"
+          title="授课模式需选择班级"
+          description="系统将按设备座位号匹配班级学生：匹配成功进入授课，否则进入锁定。"
         />
       </el-form>
       <template #footer>
@@ -87,6 +92,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { listDevices, switchDeviceMode, lockDevice, unlockDevice, type Device } from '@/api/devices'
+import { listClasses, type ClassInfo } from '@/api/classes'
 import { formatDateTime } from '@/utils/time'
 import { ElMessage } from 'element-plus'
 
@@ -96,9 +102,11 @@ const onlineStatus = ref<string | undefined>()
 const dialogVisible = ref(false)
 const switching = ref(false)
 const selectedDevice = ref<Device | null>(null)
+const classes = ref<ClassInfo[]>([])
 const modeForm = ref({
   targetMode: 'open',
   operatorName: 'admin',
+  classId: '' as string,
 })
 
 const loadDevices = async () => {
@@ -118,20 +126,37 @@ const loadDevices = async () => {
 const showModeSwitchDialog = (device: Device) => {
   selectedDevice.value = device
   modeForm.value.targetMode = device.currentMode
+  modeForm.value.classId = device.classId || ''
   dialogVisible.value = true
 }
 
 const confirmModeSwitch = async () => {
   if (!selectedDevice.value) return
-  
+  if (modeForm.value.targetMode === 'teaching' && !modeForm.value.classId) {
+    ElMessage.warning('切换到授课模式前请先选择班级')
+    return
+  }
+
   switching.value = true
   try {
-    await switchDeviceMode(
+    const res = await switchDeviceMode(
       selectedDevice.value.id,
       modeForm.value.targetMode,
-      modeForm.value.operatorName
+      modeForm.value.operatorName,
+      modeForm.value.targetMode === 'teaching' ? modeForm.value.classId : undefined
     )
-    ElMessage.success('模式切换成功')
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '模式切换失败')
+      return
+    }
+    const data = res.data || {}
+    if (data.admissionBlocked) {
+      ElMessage.warning('座位不匹配，该设备已进入锁定模式')
+    } else if (modeForm.value.targetMode === 'teaching') {
+      ElMessage.success('已进入授课模式')
+    } else {
+      ElMessage.success('模式切换成功')
+    }
     dialogVisible.value = false
     loadDevices()
   } catch (error) {
@@ -184,6 +209,9 @@ const handleUnlock = async (device: Device) => {
 
 onMounted(() => {
   loadDevices()
+  listClasses().then((res) => {
+    if (res.code === 0 && res.data) classes.value = res.data
+  }).catch(() => {})
 })
 </script>
 

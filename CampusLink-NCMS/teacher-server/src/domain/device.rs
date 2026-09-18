@@ -271,16 +271,53 @@ pub async fn update_device_mode(pool: &SqlitePool, device_id: &str, mode: &str) 
     Ok(())
 }
 
-pub async fn switch_device_mode(pool: &SqlitePool, device_id: &str, target_mode: &str, operator_name: &str) -> Result<String> {
+pub struct ModeSwitchOutcome {
+    pub command_id: String,
+    pub effective_mode: String,
+    pub admission_blocked: bool,
+}
+
+pub async fn switch_device_mode(
+    pool: &SqlitePool,
+    device_id: &str,
+    target_mode: &str,
+    operator_name: &str,
+    class_id: Option<&str>,
+) -> Result<ModeSwitchOutcome> {
     let command_id = Uuid::new_v4().to_string();
+
+    let effective_mode = if target_mode == "teaching" {
+        let class_id = match class_id {
+            Some(id) if !id.trim().is_empty() => id,
+            _ => anyhow::bail!("切换到授课模式前请先选择班级"),
+        };
+        let exists: Option<String> = sqlx::query_scalar("SELECT id FROM classes WHERE id = ?")
+            .bind(class_id)
+            .fetch_optional(pool)
+            .await?;
+        if exists.is_none() {
+            anyhow::bail!("班级不存在");
+        }
+        crate::domain::class::teaching_target_for_device(pool, class_id, device_id).await?
+    } else {
+        target_mode.to_string()
+    };
+
+    let _ = crate::domain::usage::close_open_session(pool, device_id).await;
 
     sqlx::query(
         "UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?"
     )
-    .bind(target_mode)
+    .bind(&effective_mode)
     .bind(device_id)
     .execute(pool)
     .await?;
+
+    let content = if effective_mode == target_mode {
+        format!("Switched to {}", effective_mode)
+    } else {
+        format!("Switched to {} (admission denied, forced {})", target_mode, effective_mode)
+    };
 
     sqlx::query(
         r#"INSERT INTO operation_logs (id, log_type, operator, target_id, content, extra_payload, created_at)
@@ -289,11 +326,15 @@ pub async fn switch_device_mode(pool: &SqlitePool, device_id: &str, target_mode:
     .bind(&command_id)
     .bind(operator_name)
     .bind(device_id)
-    .bind(format!("Switched to {}", target_mode))
+    .bind(content)
     .execute(pool)
     .await?;
 
-    Ok(command_id)
+    Ok(ModeSwitchOutcome {
+        command_id,
+        admission_blocked: effective_mode != target_mode,
+        effective_mode,
+    })
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
