@@ -34,12 +34,13 @@
   - 前端构建产物需手动同步到 `teacher-server/static/` 目录（`cp -r teacher-web/dist/* teacher-server/static/`），SPA fallback 依赖 `static/index.html`
   - 教师端支持 `DATABASE_URL` 环境变量指定 SQLite 路径，测试时可用临时目录避免污染
   - 后台编译任务需用 background_terminal_create 管理；cargo 在 2 核环境编译 teacher-server 约 5-6 分钟、student-agent 约 20 分钟
-  - `cargo test` 不会更新 `target/debug/teacher-server` 二进制，修改 main.rs 后需先 `cargo build` 再启动服务验证
+  - `cargo test` 不会更新运行用二进制，修改 main.rs 后需先 `cargo build` 再启动服务验证
+  - 教师端二进制名为 `teacher`（`cargo build --bin teacher` / `cargo test --bin teacher`）；学生端主进程二进制名为 `student`（`cargo build -p agent-core`）
   - domain 层已建立内存 SQLite 单测体系：`domain/test_support.rs` 提供 `setup_pool()`（跑全量迁移）与设备/学生注册辅助函数，运行 `cargo test --all-targets` 即可（23 个测试）
   - 学生端上报接口已改为公开路由+device_id 校验（check-in/inspection-submit/hardware-snapshot + policies/process-guard/sync），教师端查询类接口仍受 JWT 保护
   - Windows 交叉编译：需 `apt-get install gcc-mingw-w64-x86-64` + `rustup target add x86_64-pc-windows-gnu`，用 `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc cargo build --release --target x86_64-pc-windows-gnu`（勿在项目写死 .cargo/config.toml，避免污染 Linux 构建）
   - teacher-server Windows 编译约 12 分钟、student-agent（含 eframe/egui 的 campus-lock）约 11 分钟；产物均静态链接只依赖 Windows 系统 DLL
-  - Windows 发布包位置 `dist/windows-release/`，含 teacher-server（exe+start.bat+config.toml+static）与 student-agent（agent-core/campus-guard/campus-lock 三 exe+start.bat）；zip 包 `dist/CampusLink-NCMS-windows-v1.1.zip`
+  - Windows 发布包位置 `dist/windows-release/`：教师端双击 `teacher.exe`，学生端双击 `student.exe`；exe 启动时自动切到自身目录并创建 data/logs/config。zip 包 `dist/CampusLink-NCMS-windows-v1.1.zip`
   - student-agent 配置加密存于 `config/config.enc`，默认连接 localhost:8080 或 UDP 9999 广播自动发现教师端；锁屏密码默认 admin123
   - Windows bat 脚本必须用 CRLF 换行（cmd 不认 LF，块结构 `( ) else ( )` 会报"此时不应有..."），且避免块结构改用 goto 跳转
   - 教师端 UDP discovery 必须返回本机局域网 IP 而非 0.0.0.0（0.0.0.0 无法作为连接目标，Windows 报 os error 10049）；已改用 if-addrs 枚举非回环 IPv4 接口
@@ -51,7 +52,7 @@
 - Context: 验证班级/座位/签到/改密/模式切换特性时发现
 - Category: Troubleshooting & Debugging / Build & Compilation
 - Instructions:
-  - teacher-server 的 `config/config.toml` 与 `static/` 均相对可执行文件所在目录解析（不是 cwd）；本地冒烟测试需新建临时目录，放入 `teacher-server` 可执行文件、`config/config.toml`、`static/`，再在该目录启动
+  - 教师端 `teacher` 启动时 `set_current_dir(exe_dir)`，并自动创建 `data/` `logs/` `config/`，缺失时写入默认 `config/config.toml`。冒烟测试把 `teacher` 可执行文件、`static/` 放到同一临时目录即可
   - 冒烟测试用 SQLite 独立库文件（`sqlite:data/xxx.db`），每次换新库名即可获得干净数据，避免删除文件
   - 公开路由（无需 JWT）：`/api/auth/login`、`/api/auth/student-login`、`/api/auth/student-set-password`、`/api/devices/register`、`/api/attendance/check-in`、`/api/attendance/context`；班级/学生/设备等管理接口需 Bearer JWT
   - 学生改密接口 `/api/auth/student-set-password` 请求体为 snake_case（`student_id`/`old_password`/`new_password`），已用 serde alias 兼容 camelCase；学生登录 `/api/auth/student-login` 的 `student_no` 可为学号或姓名，初始密码默认 `123456`

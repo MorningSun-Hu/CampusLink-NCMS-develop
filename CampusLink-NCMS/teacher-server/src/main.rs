@@ -9,6 +9,7 @@ mod crypto_util;
 mod proto;
 
 use anyhow::Result;
+use std::path::PathBuf;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -16,8 +17,39 @@ use app::Config;
 use api::create_app;
 use infrastructure::create_sqlite_pool;
 
+const DEFAULT_TEACHER_CONFIG: &str = r#"[server]
+host = "0.0.0.0"
+port = 8080
+
+[database]
+driver = "sqlite"
+url = "sqlite:data/campuslink.db"
+
+[security]
+fingerprint_seed = "campuslink-teacher-fingerprint-seed"
+aes_key_rotation_days = 30
+"#;
+
+fn init_runtime() -> Result<()> {
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    std::env::set_current_dir(&exe_dir)?;
+    for dir in ["data", "logs", "config"] {
+        std::fs::create_dir_all(exe_dir.join(dir))?;
+    }
+    let cfg = exe_dir.join("config").join("config.toml");
+    if !cfg.exists() {
+        std::fs::write(&cfg, DEFAULT_TEACHER_CONFIG)?;
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_runtime()?;
+
     // File appender with daily rotation, keep 14 days
     let file_appender = tracing_appender::rolling::daily("logs", "teacher-server");
 

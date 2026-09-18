@@ -4,9 +4,17 @@ use aes_gcm::{
 };
 use sha2::{Sha256, Digest};
 use rand::RngCore;
+use std::path::PathBuf;
 
 const CONFIG_FILE: &str = "config/config.enc";
 const LEGACY_CONFIG_FILE: &str = "config/config.json";
+
+fn runtime_path(relative: &str) -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(relative)))
+        .unwrap_or_else(|| PathBuf::from(relative))
+}
 
 pub fn derive_key(password: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
@@ -108,16 +116,19 @@ pub fn decrypt_message(data: &[u8], session_key: &str) -> Result<String, String>
 
 pub fn save_encrypted(json: &str, password: &str) -> Result<(), String> {
     let encrypted = encrypt_config(json, password)?;
-    std::fs::create_dir_all("config").map_err(|e| format!("mkdir: {}", e))?;
-    std::fs::write(CONFIG_FILE, encrypted).map_err(|e| format!("write: {}", e))?;
+    let path = runtime_path(CONFIG_FILE);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {}", e))?;
+    }
+    std::fs::write(&path, encrypted).map_err(|e| format!("write: {}", e))?;
     Ok(())
 }
 
 pub fn load_encrypted(password: &str) -> Result<String, String> {
-    if let Ok(data) = std::fs::read(CONFIG_FILE) {
+    if let Ok(data) = std::fs::read(runtime_path(CONFIG_FILE)) {
         return decrypt_config(&data, password);
     }
-    if let Ok(json) = std::fs::read_to_string(LEGACY_CONFIG_FILE) {
+    if let Ok(json) = std::fs::read_to_string(runtime_path(LEGACY_CONFIG_FILE)) {
         save_encrypted(&json, password)?;
         return Ok(json);
     }

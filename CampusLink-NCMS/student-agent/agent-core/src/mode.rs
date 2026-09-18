@@ -2,6 +2,8 @@ use anyhow::Result;
 use tracing::{info, error};
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use tokio::sync::mpsc;
 
 use crate::config::Config;
@@ -57,6 +59,7 @@ pub async fn handle_mode_switch(
         }
         ModeType::Locked => {
             info!("Switching to Locked mode - full lockdown");
+            remember_mode_before_lock(config, false);
             lock_completely(config, unlock_tx).await?;
         }
     }
@@ -75,13 +78,62 @@ pub async fn handle_mode_switch(
 /// 开放模式：解除所有限制
 async fn disable_all_locks() -> Result<()> {
     info!("Disabling all locks - Open mode");
+    kill_lock_process();
+    Ok(())
+}
+
+pub fn remember_mode_before_lock(config: &mut Config, overlay: bool) {
+    if config.current_mode != "locked" {
+        config.mode_before_lock = Some(config.current_mode.clone());
+    }
+    config.lock_is_overlay = overlay;
+}
+
+pub fn resolve_restore_mode(config: &Config, hint: &str) -> String {
+    let candidate = if let Some(saved) = config.mode_before_lock.as_deref() {
+        if matches!(saved, "open" | "teaching" | "exam") {
+            saved
+        } else if matches!(hint, "open" | "teaching" | "exam") {
+            hint
+        } else {
+            "open"
+        }
+    } else if matches!(hint, "open" | "teaching" | "exam") {
+        hint
+    } else {
+        "open"
+    };
+    match candidate {
+        "teaching" | "open" | "exam" => candidate.to_string(),
+        _ => "open".to_string(),
+    }
+}
+
+/// Kill the lock overlay and restore `restore_mode`.
+/// Returns true when admission UI should start (full mode-switch lock, not overlay).
+pub fn apply_unlock_restore(config: &mut Config, restore_mode: String) -> bool {
+    let overlay = config.lock_is_overlay;
+    kill_lock_process();
+    config.is_locked = false;
+    config.lock_pid = None;
+    config.lock_is_overlay = false;
+    config.current_mode = restore_mode.clone();
+    if let Err(e) = config.save() {
+        error!("Failed to save config after unlock restore: {}", e);
+    }
+    !overlay && matches!(restore_mode.as_str(), "open" | "teaching")
+}
+
+pub fn kill_lock_process() {
     #[cfg(target_os = "windows")]
     {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let _ = Command::new("taskkill")
             .args(["/IM", "campus-lock.exe", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn();
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -89,9 +141,8 @@ async fn disable_all_locks() -> Result<()> {
             .arg("campus-lock")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn();
+            .status();
     }
-    Ok(())
 }
 
 /// 考试模式：全屏锁定，禁止切换应用

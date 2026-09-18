@@ -1,5 +1,10 @@
 # CampusLink-NCMS Windows 发布总结
 
+本文档记录 2026-06 早期联调。当前发布包结构、二进制名（`teacher.exe` / `student.exe` / `campus-checkin.exe`）与启动方式见：
+
+- `docs/p12-stage-summary.md`
+- `dist/windows-release/README.md`
+
 ## 一、构建状态
 
 日期：2026-06-15  

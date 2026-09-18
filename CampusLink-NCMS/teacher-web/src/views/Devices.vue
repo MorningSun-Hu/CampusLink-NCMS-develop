@@ -191,6 +191,7 @@ const handleLock = async (device: Device) => {
   try {
     await lockDevice(device.id, '教师远程锁定')
     ElMessage.success('锁屏命令已发送')
+    await loadDevices()
   } catch (error) {
     console.error('Lock failed:', error)
     ElMessage.error('锁屏命令发送失败')
@@ -201,6 +202,7 @@ const handleUnlock = async (device: Device) => {
   try {
     await unlockDevice(device.id)
     ElMessage.success('解锁命令已发送')
+    await loadDevices()
   } catch (error) {
     console.error('Unlock failed:', error)
     ElMessage.error('解锁命令发送失败')

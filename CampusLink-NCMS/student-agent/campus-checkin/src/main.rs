@@ -198,7 +198,7 @@ impl CheckinApp {
         if self.teacher_input == self.lock_password && !self.lock_password.is_empty() {
             close_session(&self.server_url, &self.device_id, Some("teacher_unlock"));
             let _ = writeln!(std::io::stderr(), "campus-checkin: teacher unlock");
-            std::process::exit(EXIT_TEACHER);
+            exit_with(EXIT_TEACHER);
         }
         self.teacher_attempts += 1;
         self.teacher_input.clear();
@@ -238,7 +238,7 @@ impl CheckinApp {
             }
             Ok(WorkerResult::CheckedIn(msg)) => {
                 let _ = writeln!(std::io::stderr(), "campus-checkin: SUCCESS {}", msg);
-                std::process::exit(EXIT_OK);
+                exit_with(EXIT_OK);
             }
             Err(e) => {
                 self.message = e;
@@ -342,14 +342,17 @@ fn close_session(server_url: &str, device_id: &str, reason: Option<&str>) {
     let _ = client.post(&url).json(&body).send();
 }
 
+fn exit_with(code: i32) -> ! {
+    keyhook::stop_keyboard_hook();
+    std::process::exit(code);
+}
+
 impl eframe::App for CheckinApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if ctx.input(|i| i.viewport().close_requested()) {
             close_session(&self.server_url, &self.device_id, None);
-            std::process::exit(EXIT_RETRY);
+            exit_with(EXIT_RETRY);
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
 
         if let Ok(result) = self.rx.try_recv() {
             self.apply_worker(result);
@@ -377,60 +380,35 @@ impl eframe::App for CheckinApp {
                         (Stage::Identity, Mode::Open) => "开放模式：请填写使用者姓名",
                         (Stage::Identity, Mode::Teaching) => "授课模式：请使用学号或姓名登录",
                         (Stage::ChangePassword, _) => "首次签到，请设置新密码",
-                        (Stage::Inspect, _) => "环境与设备检查",
+                        (Stage::Inspect, _) => "环境与设备检查完成后，确认结果并进入桌面",
                     };
                     ui.label(egui::RichText::new(subtitle).size(16.0).color(muted));
                     ui.add_space(24.0);
                 });
 
-                let card_w = 560.0_f32.min(ui.available_width() - 40.0);
-                ui.horizontal(|ui| {
-                    let pad = ((ui.available_width() - card_w) / 2.0).max(0.0);
-                    ui.add_space(pad);
+                let card_w: f32 = if self.stage == Stage::Inspect { 720.0 } else { 560.0 };
+                let card_w = card_w.min(ui.available_width() - 40.0).max(280.0);
+                ui.vertical_centered(|ui| {
                     egui::Frame::NONE
                         .fill(card)
                         .corner_radius(12.0)
                         .inner_margin(egui::Margin::same(24))
                         .show(ui, |ui| {
-                            ui.set_width(card_w - 48.0);
+                            ui.set_min_width((card_w - 48.0).max(240.0));
+                            ui.set_max_width((card_w - 48.0).max(240.0));
                             match self.stage {
                                 Stage::Identity => self.ui_identity(ui, accent),
                                 Stage::ChangePassword => self.ui_password(ui, accent),
-                                Stage::Inspect => self.ui_inspect(ui, accent, danger, ok),
+                                Stage::Inspect => self.ui_inspect(ui, accent, muted, danger, ok),
                             }
 
-                            if !self.message.is_empty() {
-                                ui.add_space(12.0);
-                                let color = if self.message.contains("成功") || self.message.contains("完成") {
-                                    ok
-                                } else if self.message.contains("异常") {
-                                    egui::Color32::from_rgb(230, 170, 70)
-                                } else if self.busy {
-                                    muted
-                                } else {
-                                    danger
-                                };
-                                ui.label(egui::RichText::new(&self.message).size(14.0).color(color));
-                            }
+                            self.ui_status_message(ui, muted, danger, ok);
 
-                            ui.add_space(18.0);
-                            ui.separator();
-                            ui.add_space(8.0);
-                            if ui.link(egui::RichText::new("教师解锁").color(muted)).clicked() {
-                                self.show_teacher = !self.show_teacher;
-                            }
-                            if self.show_teacher {
+                            if self.stage != Stage::Inspect {
+                                ui.add_space(18.0);
+                                ui.separator();
                                 ui.add_space(8.0);
-                                ui.add_sized(
-                                    [ui.available_width(), 32.0],
-                                    egui::TextEdit::singleline(&mut self.teacher_input)
-                                        .password(true)
-                                        .hint_text("教师超级密码"),
-                                );
-                                ui.add_space(8.0);
-                                if ui.button("确认解锁").clicked() {
-                                    self.try_teacher_unlock();
-                                }
+                                self.ui_teacher_unlock(ui, muted);
                             }
                         });
                 });
@@ -440,14 +418,105 @@ impl eframe::App for CheckinApp {
             match self.stage {
                 Stage::Identity => self.start_identity(),
                 Stage::ChangePassword => self.start_change_password(),
-                Stage::Inspect => {}
+                Stage::Inspect => {
+                    if self.can_enter_desktop() {
+                        self.start_submit();
+                    }
+                }
             }
         }
-        ctx.request_repaint_after(Duration::from_millis(200));
+        if self.busy {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
     }
 }
 
 impl CheckinApp {
+    fn can_enter_desktop(&self) -> bool {
+        !self.busy && (!self.inspect_items.is_empty() || self.inspect_fail_count >= 2)
+    }
+
+    fn ui_status_message(&self, ui: &mut egui::Ui, muted: egui::Color32, danger: egui::Color32, ok: egui::Color32) {
+        if self.message.is_empty() {
+            return;
+        }
+        ui.add_space(12.0);
+        let color = if self.message.contains("成功") || self.message.contains("完成") {
+            ok
+        } else if self.message.contains("异常") {
+            egui::Color32::from_rgb(230, 170, 70)
+        } else if self.busy {
+            muted
+        } else {
+            danger
+        };
+        ui.label(egui::RichText::new(&self.message).size(14.0).color(color));
+    }
+
+    fn ui_teacher_unlock(&mut self, ui: &mut egui::Ui, muted: egui::Color32) {
+        if ui.link(egui::RichText::new("教师解锁").color(muted)).clicked() {
+            self.show_teacher = !self.show_teacher;
+        }
+        if self.show_teacher {
+            ui.add_space(8.0);
+            ui.add_sized(
+                [ui.available_width(), 32.0],
+                egui::TextEdit::singleline(&mut self.teacher_input)
+                    .password(true)
+                    .hint_text("教师超级密码"),
+            );
+            ui.add_space(8.0);
+            if ui
+                .add_sized([ui.available_width(), 32.0], egui::Button::new("确认解锁"))
+                .clicked()
+            {
+                self.try_teacher_unlock();
+            }
+        }
+    }
+
+    fn ui_inspect_actions(&mut self, ui: &mut egui::Ui, accent: egui::Color32, muted: egui::Color32) {
+        let can_enter = self.can_enter_desktop();
+        let primary = if self.busy {
+            if self.inspect_items.is_empty() && self.inspect_error.is_empty() {
+                "正在检查设备..."
+            } else {
+                "正在提交签到..."
+            }
+        } else {
+            "进入桌面"
+        };
+        let primary_fill = if can_enter {
+            accent
+        } else {
+            egui::Color32::from_rgb(70, 78, 94)
+        };
+        if ui
+            .add_enabled(
+                can_enter,
+                egui::Button::new(egui::RichText::new(primary).size(18.0).color(egui::Color32::WHITE))
+                    .fill(primary_fill)
+                    .min_size(egui::vec2(ui.available_width(), 46.0)),
+            )
+            .clicked()
+        {
+            self.start_submit();
+        }
+        ui.add_space(8.0);
+        if ui
+            .add_enabled(
+                !self.busy,
+                egui::Button::new(egui::RichText::new("重新检查").size(15.0))
+                    .min_size(egui::vec2(ui.available_width(), 36.0)),
+            )
+            .clicked()
+        {
+            self.start_inspect();
+        }
+        ui.add_space(8.0);
+        self.ui_teacher_unlock(ui, muted);
+    }
+
     fn ui_identity(&mut self, ui: &mut egui::Ui, accent: egui::Color32) {
         match self.mode {
             Mode::Open => {
@@ -499,43 +568,53 @@ impl CheckinApp {
         }
     }
 
-    fn ui_inspect(&mut self, ui: &mut egui::Ui, accent: egui::Color32, danger: egui::Color32, ok: egui::Color32) {
+    fn ui_inspect(&mut self, ui: &mut egui::Ui, accent: egui::Color32, muted: egui::Color32, danger: egui::Color32, ok: egui::Color32) {
         if !self.inspect_items.is_empty() {
-            egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-                for item in &self.inspect_items {
-                    ui.horizontal(|ui| {
-                        let (mark, color) = if item.status == "normal" {
-                            ("正常", ok)
-                        } else {
-                            ("异常", danger)
-                        };
-                        ui.label(egui::RichText::new(&item.name).color(egui::Color32::WHITE));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(egui::RichText::new(mark).color(color));
+            egui::ScrollArea::vertical()
+                .max_height(240.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    egui::Grid::new("inspect_grid")
+                        .num_columns(3)
+                        .spacing([16.0, 10.0])
+                        .min_col_width(72.0)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("检查项").color(accent));
+                            ui.label(egui::RichText::new("结果").color(accent));
+                            ui.label(egui::RichText::new("详情").color(accent));
+                            ui.end_row();
+                            for item in &self.inspect_items {
+                                let (mark, color) = if item.status == "normal" {
+                                    ("正常", ok)
+                                } else {
+                                    ("异常", danger)
+                                };
+                                ui.label(egui::RichText::new(&item.name).color(egui::Color32::WHITE));
+                                ui.label(egui::RichText::new(mark).color(color));
+                                let detail = item.detail.clone().unwrap_or_default();
+                                ui.label(
+                                    egui::RichText::new(detail)
+                                        .size(13.0)
+                                        .color(egui::Color32::from_rgb(140, 148, 164)),
+                                );
+                                ui.end_row();
+                            }
                         });
-                    });
-                    if let Some(detail) = &item.detail {
-                        ui.label(egui::RichText::new(detail).size(12.0).color(egui::Color32::from_rgb(140, 148, 164)));
-                    }
-                    ui.add_space(4.0);
-                }
-            });
+                });
         } else if !self.inspect_error.is_empty() {
-            ui.label(egui::RichText::new(&self.inspect_error).color(danger));
+            ui.label(egui::RichText::new(&self.inspect_error).size(15.0).color(danger));
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new("可点击「重新检查」，连续失败两次后仍可进入桌面")
+                    .size(13.0)
+                    .color(egui::Color32::from_rgb(140, 148, 164)),
+            );
         } else {
-            ui.label(egui::RichText::new("正在检查...").color(accent));
+            ui.label(egui::RichText::new("正在检查设备与网络，请稍候...").size(15.0).color(accent));
         }
-
         ui.add_space(16.0);
-        ui.horizontal(|ui| {
-            if ui.add_enabled(!self.busy, egui::Button::new("重新检查")).clicked() {
-                self.start_inspect();
-            }
-            let can_submit = !self.busy && (!self.inspect_items.is_empty() || self.inspect_fail_count >= 2);
-            if ui.add_enabled(can_submit, egui::Button::new(egui::RichText::new("提交签到").color(egui::Color32::WHITE))).clicked() {
-                self.start_submit();
-            }
-        });
+        self.ui_inspect_actions(ui, accent, muted);
     }
 }
 
@@ -575,7 +654,7 @@ fn main() {
     if args.len() < 4 {
         let msg = "Usage: campus-checkin <server_url> <device_id> <mode> [lock_password]";
         let _ = writeln!(std::io::stderr(), "{}", msg);
-        std::process::exit(EXIT_USAGE);
+        exit_with(EXIT_USAGE);
     }
 
     let server_url = args[1].clone();
@@ -610,5 +689,5 @@ fn main() {
     );
 
     close_session(&close_url, &close_device, None);
-    std::process::exit(EXIT_RETRY);
+    exit_with(EXIT_RETRY);
 }

@@ -5,9 +5,12 @@ CampusLink-NCMS/
 ├─ README.md
 ├─ .gitignore
 ├─ docs/
+│  ├─ README.md
+│  ├─ p12-stage-summary.md
+│  ├─ development-summary.md
 │  ├─ requirements-analysis.md
-│  ├─ project-structure.md
 │  ├─ architecture-overview.md
+│  ├─ project-structure.md
 │  └─ database-outline.md
 ├─ proto/
 │  └─ README.md
@@ -46,7 +49,9 @@ CampusLink-NCMS/
 │  │  └─ src/
 │  ├─ campus-guard/
 │  │  └─ src/
-│  └─ campus-lock/
+│  ├─ campus-lock/
+│  │  └─ src/
+│  └─ campus-checkin/
 │     └─ src/
 └─ deploy/
    ├─ windows/
@@ -56,6 +61,6 @@ CampusLink-NCMS/
 ## 设计原则
 
 - 教师端服务与教师端界面分离
-- 学生端拆分为主进程、守护进程、锁定进程
+- 学生端拆为主进程 `student`、守护 `campus-guard`、锁定 `campus-lock`、准入 `campus-checkin`
 - 协议文件单独管理，便于前后端与 Agent 共享
 - 文档先行，编码按模块推进

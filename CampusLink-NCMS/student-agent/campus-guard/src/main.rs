@@ -1,14 +1,29 @@
 use anyhow::Result;
 use std::process::Command;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 static EXIT_COUNTER: AtomicU32 = AtomicU32::new(0);
 const MAX_EXIT_COUNT: u32 = 10;
 
+fn init_runtime() -> Result<()> {
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    std::env::set_current_dir(&exe_dir)?;
+    std::fs::create_dir_all(exe_dir.join("config"))?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_runtime()?;
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -21,13 +36,8 @@ async fn main() -> Result<()> {
     
     let guard_processes = vec![
         GuardedProcess {
-            name: "agent-core",
-            executable: "agent-core",
-            restart_window_secs: 60,
-        },
-        GuardedProcess {
-            name: "campus-lock",
-            executable: "campus-lock",
+            name: "student",
+            executable: "student",
             restart_window_secs: 60,
         },
     ];
@@ -57,9 +67,8 @@ async fn main() -> Result<()> {
         }
 
         info!(
-            "Guard check complete: lagent_core={}, campus_lock={}, exit_count={}",
-            check_process_running("agent-core"),
-            check_process_running("campus-lock"),
+            "Guard check complete: student={}, exit_count={}",
+            check_process_running("student"),
             EXIT_COUNTER.load(Ordering::Relaxed),
         );
 
@@ -79,6 +88,7 @@ fn check_process_running(process_name: &str) -> bool {
         let filter = format!("IMAGENAME eq {}.exe", process_name);
         let output = Command::new("tasklist")
             .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+            .creation_flags(0x08000000)
             .output();
 
         if let Ok(out) = output {
@@ -103,22 +113,27 @@ fn check_process_running(process_name: &str) -> bool {
 }
 
 fn start_process(executable: &str) -> Result<()> {
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
     #[cfg(target_os = "windows")]
     {
+        let path = exe_dir.join(format!("{}.exe", executable));
         Command::new("cmd")
-            .args(["/C", "start", "", &format!("{}.exe", executable)])
+            .current_dir(&exe_dir)
+            .args(["/C", "start", "", &path.to_string_lossy()])
+            .creation_flags(0x08000000)
             .spawn()?;
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let exe = if cfg!(windows) {
-            format!("{}.exe", executable)
-        } else {
-            format!("./{}", executable)
-        };
+        let path = exe_dir.join(executable);
         Command::new("sh")
-            .args(["-c", &exe])
+            .current_dir(&exe_dir)
+            .args(["-c", &path.to_string_lossy()])
             .spawn()?;
     }
 

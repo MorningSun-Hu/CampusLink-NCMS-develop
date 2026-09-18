@@ -1,5 +1,7 @@
 # CampusLink-NCMS 生产部署指南
 
+当前二进制名与目录以 `docs/p12-stage-summary.md` 和 `dist/windows-release/README.md` 为准：教师端 `teacher.exe`，学生端 `student.exe` + `campus-checkin.exe`。
+
 ## 一、部署拓扑
 
 ```
@@ -8,7 +10,7 @@
                     |    Windows 10/11 x64      |
                     |    固定 IP: 192.168.x.x   |
                     |                          |
-                    |  teacher-server.exe      |
+                    |  teacher.exe             |
                     |  (Windows Service)        |
                     |  端口: TCP 8080           |
                     |  Web UI + API + WS        |
@@ -22,9 +24,10 @@
 |  学生机 1 (PC-01) |  | 学生机 2 (PC-02) |  | 学生机 N (PC-N) |
 |  Windows 10/11    |  |  Windows 10/11  |  |  Windows 10/11  |
 |                   |  |                 |  |                 |
-|  agent-core.exe   |  | agent-core.exe  |  | agent-core.exe  |
+|  student.exe      |  | student.exe     |  | student.exe     |
 |  campus-guard.exe |  | campus-guard    |  | campus-guard    |
 |  campus-lock.exe  |  | campus-lock     |  | campus-lock     |
+|  campus-checkin   |  | campus-checkin  |  | campus-checkin  |
 +-------------------+  +-----------------+  +-----------------+
 ```
 

@@ -4,12 +4,12 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 
 ## 当前状态
 
-- ✅ P0-P4 阶段已完成
-- ✅ P0 最小业务闭环已打通
-- 设备注册、心跳、在线状态、模式切换功能可用
-- 教师端服务、Web、学生端 Agent 可独立编译运行
+- P0-P11 已完成：注册心跳、模式切换、签到检查、硬件日志、部署安全、120 并发压测
+- P12 已推送：班级座位、强制签到准入、考勤看板、设备使用记录（`d85c0f7`）
+- 启动合并与锁屏恢复已落地，待提交：双击 `teacher.exe` / `student.exe`；解锁恢复锁定前模式
+- 当前发布包：`dist/windows-release/`，说明见 `dist/windows-release/README.md`
 
-详细开发总结见 `docs/development-summary.md`
+阶段性成果见 `docs/p12-stage-summary.md`；P0-P11 历史见 `docs/development-summary.md`
 
 ## 文档导航
 
@@ -17,10 +17,10 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 
 ### 开发起点
 
-1. `docs/requirements-analysis.md`
-2. `docs/development-task-breakdown.md`
-3. `docs/module-roadmap.md`
-4. `docs/stage-summary-and-dev-readiness.md`
+1. `docs/p12-stage-summary.md`
+2. `docs/README.md`
+3. `docs/development-summary.md`
+4. `docs/requirements-analysis.md`
 
 ### P0 基线文档
 
@@ -44,25 +44,25 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 
 ## 当前推荐动作
 
-1. 按 `docs/p0-database-migration-execution-plan.md` 生成迁移文件
-2. 按 `docs/p0-proto-files-execution-plan.md` 生成 `.proto` 文件
-3. 基于上述结果进入 `teacher-server` 基础工程开发
+1. 读 `docs/p12-stage-summary.md` 了解本阶段成果与真机替换要点
+2. 教师机双击 `teacher.exe`，学生机双击 `student.exe`，需要守护再开 `campus-guard.exe`
+3. 启动合并与锁屏恢复代码待用户授权后提交
 
 ## 模块划分
 
 - `teacher-server/`：Rust + Axum 教师端服务
 - `teacher-web/`：Vue3 + TypeScript 教师端管理界面
-- `student-agent/`：Rust 学生端 Agent、守护进程、锁屏进程
+- `student-agent/`：Rust 学生端主进程、守护、锁屏、强制签到
 - `proto/`：WebSocket + Protobuf 通信协议定义
 - `deploy/`：Windows 与 Linux 部署资源
 - `docs/`：需求、架构、数据库、开发计划文档
 
 ## 核心能力
 
-- 学生机注册与认证
-- 学生信息与座位管理
-- 模式控制与热切换
-- 实时监控与远程操作
-- 签到、检查、维修、日志审计
-- 硬件健康与进程守护告警
+- 学生机注册、心跳、UDP 发现教师端
+- 班级、座位、学生信息管理
+- 开放 / 授课 / 考试 / 锁定模式热切换
+- 强制签到准入、环境设备检查、考勤看板
+- 设备使用记录、远程锁屏与解锁恢复
+- 硬件健康、进程守护、维修工单、日志审计
 - 网络认证与超级密码应急解锁

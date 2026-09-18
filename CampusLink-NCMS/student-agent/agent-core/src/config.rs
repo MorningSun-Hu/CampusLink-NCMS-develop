@@ -17,6 +17,10 @@ pub struct Config {
     pub token_expires_at: Option<String>,
     pub lock_password: Option<String>,
     pub session_key: Option<String>,
+    #[serde(default)]
+    pub mode_before_lock: Option<String>,
+    #[serde(default)]
+    pub lock_is_overlay: bool,
     #[serde(skip)]
     pub is_locked: bool,
     #[serde(skip)]
@@ -38,6 +42,8 @@ impl Config {
             token_expires_at: None,
             lock_password: Some("admin123".to_string()),
             session_key: None,
+            mode_before_lock: None,
+            lock_is_overlay: false,
             is_locked: false,
             lock_pid: None,
         }

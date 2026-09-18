@@ -24,6 +24,7 @@ fn main() {
         });
         let _ = writeln!(f, "campus-lock startup error: {}", e);
         let _ = writeln!(std::io::stderr(), "campus-lock error: {}", e);
+        keyhook::stop_keyboard_hook();
         std::process::exit(1);
     }
 }
@@ -61,6 +62,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }),
     )?;
 
+    keyhook::stop_keyboard_hook();
     Ok(())
 }
 
@@ -136,6 +138,7 @@ impl LockApp {
 impl eframe::App for LockApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if *self.unlocked.lock().unwrap() && self.success {
+            keyhook::stop_keyboard_hook();
             std::process::exit(0);
         }
 

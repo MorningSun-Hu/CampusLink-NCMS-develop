@@ -63,7 +63,7 @@ sqlcipher = []
 prost-build = "0.12"
 
 [[bin]]
-name = "teacher-server"
+name = "teacher"
 path = "src/main.rs"
 
 [[bin]]

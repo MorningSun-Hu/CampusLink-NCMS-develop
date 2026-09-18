@@ -6,7 +6,9 @@ use tokio::sync::mpsc;
 use tracing::{info, warn, error, debug};
 
 use crate::config::Config;
-use crate::mode::handle_mode_switch;
+use crate::mode::{
+    apply_unlock_restore, handle_mode_switch, remember_mode_before_lock, resolve_restore_mode,
+};
 
 /// WebSocket 命令枚举
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -24,11 +26,17 @@ pub enum WebSocketCommand {
     },
     /// 锁屏命令
     LockScreen {
+        #[serde(default)]
+        device_id: String,
         reason: String,
         timestamp: u64,
     },
     /// 解锁命令
     Unlock {
+        #[serde(default)]
+        device_id: String,
+        #[serde(default)]
+        restore_mode: String,
         timestamp: u64,
     },
     /// 签到触发命令（模式切换后由服务端下发）
@@ -98,8 +106,19 @@ impl CommandHandler {
                 println!("\n[MODE SWITCHED] Now in {} mode\n", self.config.current_mode);
             }
             
-            WebSocketCommand::LockScreen { reason, timestamp: _ } => {
+            WebSocketCommand::LockScreen { device_id, reason, timestamp: _ } => {
+                if !device_id.is_empty() && device_id != self.config.device_id.as_deref().unwrap_or("") {
+                    debug!("Lock screen for different device {} ignored", device_id);
+                    return Ok(());
+                }
                 info!("Received lock screen command: reason={}", reason);
+                remember_mode_before_lock(&mut self.config, true);
+                if self.config.is_locked {
+                    self.config.current_mode = "locked".to_string();
+                    let _ = self.config.save();
+                    info!("Screen already locked, mode set to locked");
+                    return Ok(());
+                }
                 let exe_dir = std::env::current_exe()
                     .ok()
                     .and_then(|p| p.parent().map(|d| d.to_path_buf()));
@@ -140,12 +159,16 @@ impl CommandHandler {
                                 info!("campus-lock still running, lock screen active");
                                 self.config.lock_pid = Some(child.id());
                                 self.config.is_locked = true;
+                                self.config.current_mode = "locked".to_string();
+                                let _ = self.config.save();
                                 println!("\n[SCREEN LOCKED] {}\n", reason);
                             }
                             Err(e) => {
                                 error!("Failed to check child status: {}", e);
                                 self.config.lock_pid = Some(child.id());
                                 self.config.is_locked = true;
+                                self.config.current_mode = "locked".to_string();
+                                let _ = self.config.save();
                             }
                         }
                     }
@@ -156,26 +179,19 @@ impl CommandHandler {
                 }
             }
             
-            WebSocketCommand::Unlock { timestamp: _ } => {
+            WebSocketCommand::Unlock { device_id, restore_mode, timestamp: _ } => {
+                if !device_id.is_empty() && device_id != self.config.device_id.as_deref().unwrap_or("") {
+                    debug!("Unlock for different device {} ignored", device_id);
+                    return Ok(());
+                }
                 info!("Received unlock command");
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/IM", "campus-lock.exe", "/F"])
-                        .spawn();
+                let restore = resolve_restore_mode(&self.config, &restore_mode);
+                let start_admission = apply_unlock_restore(&mut self.config, restore.clone());
+                if start_admission {
+                    crate::attendance::start_admission_monitor(self.config.clone());
                 }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    if let Some(pid) = self.config.lock_pid.take() {
-                        let _ = std::process::Command::new("kill")
-                            .arg(pid.to_string())
-                            .spawn();
-                    }
-                }
-                self.config.is_locked = false;
-                self.config.lock_pid = None;
-                info!("Lock screen process terminated");
-                println!("\n[SCREEN UNLOCKED]\n");
+                info!("Lock screen process terminated, restored mode={}", restore);
+                println!("\n[SCREEN UNLOCKED] Restored to {} mode\n", restore);
             }
             
             WebSocketCommand::SuperPwd { password, timestamp: _ } => {

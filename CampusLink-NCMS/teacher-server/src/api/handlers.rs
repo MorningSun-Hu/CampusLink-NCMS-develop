@@ -276,8 +276,10 @@ pub async fn lock_screen_handler(
     Json(req): Json<LockScreenRequest>,
 ) -> impl IntoResponse {
     let reason = req.reason.unwrap_or_else(|| "Teacher locked this device".to_string());
+    let _ = device::remember_mode_and_lock(&state.pool, &req.device_id).await;
     let msg = format!(
-        r#"{{"type":"lock_screen","reason":"{}","timestamp":{}}}"#,
+        r#"{{"type":"lock_screen","device_id":"{}","reason":"{}","timestamp":{}}}"#,
+        req.device_id,
         reason,
         chrono::Utc::now().timestamp()
     );
@@ -290,13 +292,18 @@ pub async fn unlock_handler(
     State(state): State<AppState>,
     Json(req): Json<LockScreenRequest>,
 ) -> impl IntoResponse {
+    let restore = device::unlock_restore_mode(&state.pool, &req.device_id)
+        .await
+        .unwrap_or_else(|_| "open".to_string());
     let msg = format!(
-        r#"{{"type":"unlock","timestamp":{}}}"#,
+        r#"{{"type":"unlock","device_id":"{}","restore_mode":"{}","timestamp":{}}}"#,
+        req.device_id,
+        restore,
         chrono::Utc::now().timestamp()
     );
     let _ = state.ws_tx.send(msg);
-    info!("Unlock command sent for device={}", req.device_id);
-    Json(ApiResponse::success(serde_json::json!({"device_id": req.device_id, "status": "unlock_sent"})))
+    info!("Unlock command sent for device={}, restore_mode={}", req.device_id, restore);
+    Json(ApiResponse::success(serde_json::json!({"device_id": req.device_id, "status": "unlock_sent", "restore_mode": restore})))
 }
 
 pub async fn ws_handler(
@@ -434,6 +441,11 @@ async fn process_heartbeat_json(pool: &SqlitePool, text: &str) -> Option<String>
     if let Ok(data) = serde_json::from_str::<serde_json::Value>(text) {
         if let Some(device_id) = data["device_id"].as_str() {
             let _ = device::update_heartbeat(pool, device_id).await;
+            if let Some(mode) = data["mode"].as_str() {
+                if matches!(mode, "open" | "teaching" | "exam" | "locked") {
+                    let _ = device::update_device_mode(pool, device_id, mode).await;
+                }
+            }
             return Some(device_id.to_string());
         }
     }

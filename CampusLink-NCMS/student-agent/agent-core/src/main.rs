@@ -13,6 +13,7 @@ mod process_guard;
 mod discovery;
 
 use anyhow::Result;
+use std::path::PathBuf;
 use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -20,8 +21,20 @@ use config::Config;
 use register::collect_and_register;
 use websocket::HeartbeatLoop;
 
+fn init_runtime() -> Result<()> {
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    std::env::set_current_dir(&exe_dir)?;
+    std::fs::create_dir_all(exe_dir.join("config"))?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_runtime()?;
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()

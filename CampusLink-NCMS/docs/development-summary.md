@@ -26,6 +26,8 @@ CampusLink-NCMS 是一个网络教室使用管理系统，包含教师端服务�
 | P9 | 学生管理 + 锁屏完善 + 安全加固 | 完成 | CRUD、Excel 导入导出、超级密码、AES256 配置加密 |
 | P10 | 网络认证、设备发现、通信升级 | 完成 | JWT、UDP 发现、白名单、WS 加密、工单、Protobuf |
 | P11 | 全部缺口补齐 + 并发压测 | 完成 | 11 项缺口 + 120 并发压测通过 |
+| P12 | 班级座位、强制准入、考勤与使用记录 | 完成（已推送） | `17a887c` + `d85c0f7`；规格任务 1-13 完成 |
+| P12 补丁 | 启动合并、签到 UX、锁屏恢复 | 代码已落地，待提交 | `teacher.exe`/`student.exe`；解锁恢复锁定前模式 |
 
 ## 三、本轮 Windows 联调确认结果
 
@@ -146,6 +148,10 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - `0013_create_device_whitelist.sql`
 - `0014_create_repair_orders.sql`
 - `0015_create_network_accounts.sql`
+- `0016_create_classes.sql`
+- `0017_add_class_and_signin_fields.sql`
+- `0018_device_usage_records.sql`
+- `0019_device_mode_before_lock.sql`（工作区未提交）
 
 ### 2. 教师端服务
 
@@ -202,7 +208,8 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 - 锁屏进程退出实时检测与状态上报（mpsc channel → 心跳循环 → WebSocket 通知教师端）
 
 辅助进程：
-- `campus-guard`：双进程守护（监控 agent-core 与 campus-lock），异常退出自动拉起
+- `campus-checkin`：开放/授课强制签到准入（身份确认 + 环境设备检查）
+- `campus-guard`：守护 `student.exe`，异常退出自动拉起
 - `campus-lock`：全屏锁定 + 超级密码解锁（失败计数限流）
 
 ### 4. 教师端 Web
@@ -210,44 +217,41 @@ Received message: {"type":"heartbeat_ack","ack_code":0,"message":"ok"}
 页面：
 - `/login`：登录页占位
 - `/dashboard`：仪表盘
-- `/devices`：设备列表与模式切换弹窗
+- `/devices`：设备列表、模式切换、锁屏/解锁
+- `/classes`：班级、座位绑定、批量切模式
+- `/students`：学生 CRUD、Excel 导入导出
 - `/monitor`：监控总览
-- `/attendance`：签到管理（记录列表、统计卡片、补签）
+- `/attendance`：考勤筛选、看板、缺勤名单、导出
+- `/usage`：设备使用记录
 - `/alerts`：检查告警（检查记录、告警处理、图片上传与预览）
 - `/hardware`：硬件快照（设备硬件详情 + 变更记录表）
 - `/logs`：日志中心（分页查询 + 类型筛选）
+- `/repairs`：维修工单
+- `/settings`：超级密码、定时切模式
+- `/network-accounts`：网络认证账号
+- `/device-whitelist`：设备白名单
 
 ## 六、Windows 发布包状态
 
 发布包目录：
 
+当前发布包以 `dist/windows-release/README.md` 与 `docs/p12-stage-summary.md` 为准。
+
 ```text
 dist/windows-release/
-├─ install.bat
-├─ README-windows.md
-├─ teacher-server.exe
+├─ README.md
 ├─ teacher-server/
-│  ├─ start.bat
-│  └─ teacher-server.exe
+│  ├─ teacher.exe
+│  ├─ config/config.toml
+│  └─ static/
 └─ student-agent/
-   ├─ start.bat
-   ├─ config.json
-   ├─ agent-core.exe
+   ├─ student.exe
    ├─ campus-guard.exe
-   └─ campus-lock.exe
+   ├─ campus-lock.exe
+   └─ campus-checkin.exe
 ```
 
-Windows 验证顺序：
-
-```powershell
-cd C:\Users\Hcy\Desktop\windows-release\windows-release\teacher-server
-.\start.bat
-```
-
-```powershell
-cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
-.\start.bat
-```
+教师机双击 `teacher.exe`，学生机双击 `student.exe`；需要守护再双击 `campus-guard.exe`。
 
 ## 七、P7 变更记录
 
@@ -411,7 +415,19 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 
 压测流程：120 agent 并发注册 → 建立 WS 连接 → 60s 内每 5s 发送心跳 → 统计成功率/延迟/QPS。
 
-## 十、开发规范执行情况
+## 十、P12 班级座位、强制准入与考勤使用记录
+
+详细清单见 `docs/p12-stage-summary.md`。此处只记提交与关键产物。
+
+| 提交 | 内容 |
+|------|------|
+| `17a887c` | 班级、座位、授课准入、签到规则 |
+| `d85c0f7` | `campus-checkin`、考勤看板、`device_usage_records`、教师端使用记录页 |
+| 工作区未提交 | 启动合并为 `teacher.exe`/`student.exe`；签到闪烁与检查按钮；`campus-guard` 只守护 student；解锁恢复 `mode_before_lock` |
+
+迁移：`0016` 班级、`0017` 班级座位字段、`0018` 使用记录、`0019` 锁定前模式（待提交）。
+
+## 十一、开发规范执行情况
 
 - 每次阶段切换先读取 `/workspace/.monkeycode/MEMORY.md`。
 - 提交代码前等待用户明确授权。
@@ -421,6 +437,6 @@ cd C:\Users\Hcy\Desktop\windows-release\windows-release\student-agent
 
 ---
 
-报告更新时间：2026-07-22  
-报告版本：v2.1  
-当前状态：P0-P11 全部完成（核心业务 + 部署安全 + 网络认证 + 通信加密 + 120 并发压测通过），具备生产级部署交付能力
+报告更新时间：2026-09-18
+报告版本：v3.0
+当前状态：P0-P12 已完成并已推送；启动合并与锁屏恢复待提交。详见 `docs/p12-stage-summary.md`

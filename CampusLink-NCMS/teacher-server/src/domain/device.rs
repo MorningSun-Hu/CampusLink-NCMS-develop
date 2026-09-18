@@ -22,6 +22,7 @@ pub struct DeviceRow {
     pub class_id: Option<String>,
     pub seat_no: Option<String>,
     pub pending_checkin: i64,
+    pub mode_before_lock: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -271,6 +272,42 @@ pub async fn update_device_mode(pool: &SqlitePool, device_id: &str, mode: &str) 
     Ok(())
 }
 
+pub async fn remember_mode_and_lock(pool: &SqlitePool, device_id: &str) -> Result<()> {
+    sqlx::query(
+        r#"UPDATE student_devices
+           SET mode_before_lock = CASE
+                 WHEN current_mode != 'locked' THEN current_mode
+                 ELSE mode_before_lock
+               END,
+               current_mode = 'locked',
+               updated_at = datetime('now')
+           WHERE id = ?"#
+    )
+    .bind(device_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub fn sanitize_restore_mode(mode: &str) -> String {
+    match mode {
+        "teaching" | "open" | "exam" => mode.to_string(),
+        _ => "open".to_string(),
+    }
+}
+
+pub async fn unlock_restore_mode(pool: &SqlitePool, device_id: &str) -> Result<String> {
+    let before: Option<String> = sqlx::query_scalar(
+        "SELECT mode_before_lock FROM student_devices WHERE id = ?"
+    )
+    .bind(device_id)
+    .fetch_optional(pool)
+    .await?;
+    let restore = sanitize_restore_mode(before.as_deref().unwrap_or("open"));
+    update_device_mode(pool, device_id, &restore).await?;
+    Ok(restore)
+}
+
 pub struct ModeSwitchOutcome {
     pub command_id: String,
     pub effective_mode: String,
@@ -304,6 +341,20 @@ pub async fn switch_device_mode(
     };
 
     let _ = crate::domain::usage::close_open_session(pool, device_id).await;
+
+    if effective_mode == "locked" {
+        sqlx::query(
+            r#"UPDATE student_devices
+               SET mode_before_lock = CASE
+                     WHEN current_mode != 'locked' THEN current_mode
+                     ELSE mode_before_lock
+                   END
+               WHERE id = ?"#
+        )
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    }
 
     sqlx::query(
         "UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?"

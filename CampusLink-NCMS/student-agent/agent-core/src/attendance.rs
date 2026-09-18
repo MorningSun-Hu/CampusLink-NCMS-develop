@@ -84,10 +84,13 @@ fn resolve_checkin_exe() -> PathBuf {
 fn kill_checkin_process() {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let _ = Command::new("taskkill")
             .args(["/IM", "campus-checkin.exe", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     }
     #[cfg(not(target_os = "windows"))]

@@ -257,17 +257,24 @@ impl HeartbeatLoop {
                 unlock_msg = self.unlock_rx.recv() => {
                     if let Some(msg) = unlock_msg {
                         info!("Unlock notification received: {}", msg);
-                        self.config.current_mode = "open".to_string();
+                        let restore = crate::mode::resolve_restore_mode(&self.command_handler.config, "");
+                        let start_admission = crate::mode::apply_unlock_restore(
+                            &mut self.command_handler.config,
+                            restore.clone(),
+                        );
+                        self.config.current_mode = self.command_handler.config.current_mode.clone();
                         self.config.is_locked = false;
                         self.config.lock_pid = None;
-                        if let Err(e) = self.config.save() {
-                            error!("Failed to save config after unlock: {}", e);
+                        self.config.mode_before_lock = self.command_handler.config.mode_before_lock.clone();
+                        self.config.lock_is_overlay = self.command_handler.config.lock_is_overlay;
+                        if start_admission {
+                            crate::attendance::start_admission_monitor(self.config.clone());
                         }
                         // 立即上报解锁状态到教师端
                         if let Err(e) = self.client.send_heartbeat().await {
                             warn!("Failed to send unlock status update: {}", e);
                         }
-                        println!("\n[SCREEN UNLOCKED] Device returned to open mode\n");
+                        println!("\n[SCREEN UNLOCKED] Restored to {} mode\n", restore);
                     }
                 }
                 
@@ -282,6 +289,8 @@ impl HeartbeatLoop {
                             self.config.current_mode = self.command_handler.config.current_mode.clone();
                             self.config.is_locked = self.command_handler.config.is_locked;
                             self.config.lock_pid = self.command_handler.config.lock_pid;
+                            self.config.mode_before_lock = self.command_handler.config.mode_before_lock.clone();
+                            self.config.lock_is_overlay = self.command_handler.config.lock_is_overlay;
                         }
                         Ok(None) => {
                             if self.client.should_reconnect() {

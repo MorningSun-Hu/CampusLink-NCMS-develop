@@ -1,5 +1,7 @@
 # 文档索引
 
+> 当前阶段请先读 `p12-stage-summary.md`。
+
 ## 一、基础文档
 
 - `requirements-analysis.md`：功能需求、角色边界、非功能要求
@@ -11,9 +13,10 @@
 
 - `development-task-breakdown.md`：全量任务拆解、里程碑、优先级、推荐顺序
 - `module-roadmap.md`：阶段路线、优先级和开发顺序总览
-- `development-summary.md`：当前开发总结报告（最新）
+- `p12-stage-summary.md`：2026-09 阶段性成果（班级座位、强制准入、考勤使用记录、启动合并）
+- `development-summary.md`：P0-P11 开发总结与历史变更
 
-## 三、P0-P6 执行文档
+## 三、P0-P11 执行文档
 
 ### 执行基线
 
@@ -24,6 +27,10 @@
 - `p4-mode-switch-execution-plan.md`：P4 模式切换执行基线
 - `p5-execution-plan.md`：P5 WebSocket 心跳与锁屏框架执行基线
 - `p6-execution-plan.md`：P6 签到与检查流程执行基线
+- `p7-execution-plan.md`：P7 硬件快照、日志、进程守护与锁屏
+- `p8-execution-plan.md`：P8 部署与安全加固
+- `p9-execution-plan.md`：P9 学生管理与锁屏完善
+- `p10-execution-plan.md`：P10 网络认证、设备发现、通信升级
 
 ### 落地文档
 
@@ -37,17 +44,17 @@
 
 ## 四、发布与联调文档
 
-- `../WINDOWS-BUILD-SUMMARY.md`：Windows 发布包构建、联调修复与验证结果
-- `../dist/windows-release/README-windows.md`：Windows 发布包使用说明
+- `p12-stage-summary.md`：当前发布包结构、二进制名与真机替换要点
+- `../WINDOWS-BUILD-SUMMARY.md`：早期 Windows 联调记录（二进制名以发布包 README 为准）
+- `../dist/windows-release/README.md`：当前 Windows 发布包使用说明
 
 ## 五、测试报告
 
 - `autotest-report.md`：后台自动构建、API 端到端功能验证、学生端实机与并发压测报告（最新，含修复记录 v1.1）
 
-## 五、使用顺序
+## 六、使用顺序
 
-1. 先读 `requirements-analysis.md`
-2. 再读 `development-summary.md`（了解当前进度）
-3. 再读 `autotest-report.md`（了解真实功能状态与缺陷）
-4. 再读 `development-task-breakdown.md`
-5. 开始新阶段开发时读对应执行基线文档
+1. 先读 `p12-stage-summary.md`（当前阶段成果与发布方式）
+2. 再读 `development-summary.md`（P0-P11 历史）
+3. 再读 `dist/windows-release/README.md`（真机启动）
+4. 新功能开发前读 `requirements-analysis.md` 与对应执行基线

@@ -162,12 +162,28 @@ pub fn guard_campus_guard() -> Option<ProcessAlert> {
     warn!("campus-guard not running, attempting restart");
 
     #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", "campus-guard.exe"])
-        .spawn();
+    let result = {
+        let dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let path = dir.join("campus-guard.exe");
+        std::process::Command::new("cmd")
+            .current_dir(&dir)
+            .args(["/C", "start", "", &path.to_string_lossy()])
+            .spawn()
+    };
 
     #[cfg(not(target_os = "windows"))]
-    let result = std::process::Command::new("./campus-guard").spawn();
+    let result = {
+        let dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        std::process::Command::new(dir.join("campus-guard"))
+            .current_dir(&dir)
+            .spawn()
+    };
 
     match result {
         Ok(child) => {

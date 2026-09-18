@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "agent-core"
+name = "student"
 path = "src/main.rs"
 
 [dependencies]
