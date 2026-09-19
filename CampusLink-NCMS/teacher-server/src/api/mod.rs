@@ -30,13 +30,14 @@ use hardware_handlers::{submit_snapshot_handler, get_snapshot_handler, list_chan
 use log_handlers::{query_logs_handler, export_logs_handler};
 use process_guard_handlers::{create_policy_handler, update_policy_handler, list_policies_handler, delete_policy_handler};
 use dashboard_handlers::dashboard_overview_handler;
-use student_handlers::{create_student_handler, list_students_handler, get_student_handler, update_student_handler, delete_student_handler, import_students_handler, export_students_handler, reset_student_password_handler};
+use student_handlers::{create_student_handler, list_students_handler, get_student_handler, update_student_handler, delete_student_handler, import_students_handler, export_students_handler, student_import_template_handler, reset_student_password_handler};
 use settings_handlers::{get_lock_password_handler, update_lock_password_handler, get_schedule_handler, update_schedule_handler};
 use auth_handlers::{login_handler, student_login_handler, student_set_password_handler};
 use class_handlers::{
     list_classes_handler, create_class_handler, update_class_handler, delete_class_handler,
     assign_students_handler, list_class_students_handler, assign_devices_handler,
     list_class_devices_handler, batch_seats_handler, auto_seats_handler,
+    renumber_seats_handler, export_class_seats_handler, import_class_seats_handler,
     reset_class_passwords_handler, switch_class_mode_handler,
 };
 use whitelist_handlers::{list_whitelist_handler, import_whitelist_handler, approve_whitelist_handler, delete_whitelist_handler};
@@ -138,6 +139,7 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/students", post(create_student_handler))
         .route("/api/students", get(list_students_handler))
         .route("/api/students/import", post(import_students_handler))
+        .route("/api/students/import-template", get(student_import_template_handler))
         .route("/api/students/export", get(export_students_handler))
         .route("/api/students/:id", get(get_student_handler))
         .route("/api/students/:id", put(update_student_handler))
@@ -153,6 +155,9 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/classes/:id/devices", post(assign_devices_handler))
         .route("/api/classes/:id/seats", post(batch_seats_handler))
         .route("/api/classes/:id/seats/auto", post(auto_seats_handler))
+        .route("/api/classes/:id/seats/renumber", post(renumber_seats_handler))
+        .route("/api/classes/:id/seats/export", get(export_class_seats_handler))
+        .route("/api/classes/:id/seats/import", post(import_class_seats_handler))
         .route("/api/classes/:id/passwords/reset", post(reset_class_passwords_handler))
         .route("/api/classes/:id/mode", post(switch_class_mode_handler))
         .route("/api/settings/lock-password", get(get_lock_password_handler))

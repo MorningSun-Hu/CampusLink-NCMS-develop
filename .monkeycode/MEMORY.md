@@ -47,6 +47,15 @@
   - 注意：`local-ip-address` 0.1 不支持 Windows（仅 unix 且依赖 ipconfig 命令），交叉编译项目禁用；获取本机 IP 用 `if-addrs` 0.15
   - 学生端已把 URL 含 0.0.0.0 视为未配置重新 discovery，discovery 失败时回退 localhost 保存
 
+[磁盘与预览（Agent 实测发现）]
+- Date: 2026-09-19
+- Context: 继续班级座位/学生导入特性时，teacher-server 编译因磁盘写满失败
+- Category: Build & Compilation / Environment Configuration
+- Instructions:
+  - 根分区约 20G。`student-agent/target` 与 `teacher-server/target` 合计可超过 14G，cargo 会报 `No space left on device`
+  - 只编教师端时，可在 `CampusLink-NCMS/student-agent` 执行 `cargo clean` 释放约 8–9G
+  - 教师端预览：后端 `cargo run --bin teacher` 监听 8080，前端 `npm run dev` 监听 5173 并反代 `/api`；默认管理员 `admin` / `admin123`
+
 [本地端到端冒烟测试方法（Agent 实测发现）]
 - Date: 2026-09-15
 - Context: 验证班级/座位/签到/改密/模式切换特性时发现
@@ -58,4 +67,3 @@
   - 学生改密接口 `/api/auth/student-set-password` 请求体为 snake_case（`student_id`/`old_password`/`new_password`），已用 serde alias 兼容 camelCase；学生登录 `/api/auth/student-login` 的 `student_no` 可为学号或姓名，初始密码默认 `123456`
   - 签到 `requiresCheckin` 语义：`open`/`teaching` 为 true，`exam`/`locked` 为 false；授课模式下学生座位号必须与设备座位号一致
   - 设备重复注册（同 `device_code`）必须返回已存在记录的主键 id，不能返回新生成的 UUID，否则按设备 id 的后续操作（归班/座位/签到）会全部失效（已修复 + 回归测试 `re_register_same_device_code_keeps_stable_id`）
-

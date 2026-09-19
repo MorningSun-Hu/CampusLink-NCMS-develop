@@ -37,8 +37,8 @@
             <div class="detail-header">
               <h3>{{ selected.name }}</h3>
               <div>
-                <el-button size="small" @click="openAssignStudents">归入学生</el-button>
-                <el-button size="small" @click="openAssignDevices">归入设备</el-button>
+                <el-button size="small" @click="openAssignStudents">添加学生</el-button>
+                <el-button size="small" @click="openAssignDevices">添加学生机</el-button>
                 <el-button size="small" type="warning" @click="resetPasswords">批量重置密码</el-button>
               </div>
             </div>
@@ -74,10 +74,14 @@
             </el-table>
 
             <el-divider content-position="left">
-              设备（{{ classDevices.length }}）
+              学生机（{{ classDevices.length }}）
               <el-button link type="primary" size="small" @click="saveSeats">保存座位号</el-button>
-              <el-button link type="primary" size="small" @click="autoSeats">按 IP 自动分配</el-button>
+              <el-button link type="primary" size="small" @click="renumberSeatNos">顺序编号</el-button>
+              <el-button link type="primary" size="small" @click="exportSeats">导出座位表</el-button>
+              <el-button link type="primary" size="small" @click="triggerImportSeats">导入座位表</el-button>
+              <el-button link type="info" size="small" @click="autoSeats">按 IP 编号</el-button>
             </el-divider>
+            <input ref="seatFileInput" type="file" accept=".xlsx" class="hidden-file" @change="onImportSeats" />
             <el-table :data="classDevices" size="small" border>
               <el-table-column prop="deviceName" label="设备名" width="140" />
               <el-table-column prop="ipAddress" label="IP" width="140" />
@@ -110,7 +114,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="studentDialogVisible" title="归入学生" width="520px">
+    <el-dialog v-model="studentDialogVisible" title="添加学生" width="520px">
       <el-select v-model="pendingStudentIds" multiple filterable placeholder="选择学生" style="width: 100%">
         <el-option
           v-for="s in assignableStudents"
@@ -125,15 +129,25 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="deviceDialogVisible" title="归入设备" width="520px">
-      <el-select v-model="pendingDeviceIds" multiple filterable placeholder="选择设备" style="width: 100%">
-        <el-option
-          v-for="d in assignableDevices"
-          :key="d.id"
-          :label="`${d.deviceName}（${d.ipAddress}）`"
-          :value="d.id"
-        />
-      </el-select>
+    <el-dialog v-model="deviceDialogVisible" title="添加学生机" width="720px">
+      <el-table
+        :data="assignableDevices"
+        size="small"
+        border
+        max-height="420"
+        @selection-change="onDeviceSelection"
+      >
+        <el-table-column type="selection" width="48" />
+        <el-table-column prop="deviceName" label="设备名" />
+        <el-table-column prop="ipAddress" label="IP" width="150" />
+        <el-table-column label="在线" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.onlineStatus === 'online' ? 'success' : 'info'" size="small">
+              {{ row.onlineStatus === 'online' ? '在线' : '离线' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
       <template #footer>
         <el-button @click="deviceDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="submitAssignDevices">确定</el-button>
@@ -148,7 +162,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listClasses, createClass, updateClass, deleteClass,
   listClassStudents, assignStudents, listClassDevices, assignDevices,
-  batchSetSeats, autoAssignSeats, resetClassPasswords, switchClassMode,
+  batchSetSeats, autoAssignSeats, renumberSeats, exportClassSeats, importClassSeats,
+  resetClassPasswords, switchClassMode,
   type ClassInfo, type SeatAssignment,
 } from '@/api/classes'
 import { listStudents, type Student } from '@/api/students'
@@ -176,6 +191,7 @@ const studentDialogVisible = ref(false)
 const deviceDialogVisible = ref(false)
 const pendingStudentIds = ref<string[]>([])
 const pendingDeviceIds = ref<string[]>([])
+const seatFileInput = ref<HTMLInputElement | null>(null)
 
 const modes = [
   { value: 'open', label: '开放模式' },
@@ -279,19 +295,23 @@ async function openAssignStudents() {
 }
 
 async function openAssignDevices() {
-  await ensureAll()
+  await ensureAll(true)
   const inClass = new Set(classDevices.value.map((d) => d.id))
   assignableDevices.value = allDevices.value.filter((d) => !inClass.has(d.id))
   pendingDeviceIds.value = []
   deviceDialogVisible.value = true
 }
 
-async function ensureAll() {
+function onDeviceSelection(rows: Device[]) {
+  pendingDeviceIds.value = rows.map((d) => d.id)
+}
+
+async function ensureAll(reloadDevices = false) {
   if (allStudents.value.length === 0) {
     const res = await listStudents({ page: 1, pageSize: 100 })
     if (res.code === 0 && res.data) allStudents.value = res.data.students
   }
-  if (allDevices.value.length === 0) {
+  if (reloadDevices || allDevices.value.length === 0) {
     const res = await listDevices()
     if (res.code === 0 && res.data) allDevices.value = res.data
   }
@@ -304,12 +324,16 @@ async function submitAssignStudents() {
   }
   submitting.value = true
   try {
-    await assignStudents(selected.value.id, pendingStudentIds.value)
-    ElMessage.success('已归入班级')
+    const res = await assignStudents(selected.value.id, pendingStudentIds.value)
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '添加失败')
+      return
+    }
+    ElMessage.success('已添加学生')
     studentDialogVisible.value = false
     await loadDetail()
   } catch (e: any) {
-    ElMessage.error('归入失败：' + (e?.message || ''))
+    ElMessage.error('添加失败：' + (e?.message || ''))
   } finally {
     submitting.value = false
   }
@@ -322,12 +346,16 @@ async function submitAssignDevices() {
   }
   submitting.value = true
   try {
-    await assignDevices(selected.value.id, pendingDeviceIds.value)
-    ElMessage.success('已归入班级')
+    const res = await assignDevices(selected.value.id, pendingDeviceIds.value)
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '添加学生机失败')
+      return
+    }
+    ElMessage.success('已添加学生机')
     deviceDialogVisible.value = false
     await loadDetail()
   } catch (e: any) {
-    ElMessage.error('归入失败：' + (e?.message || ''))
+    ElMessage.error('添加失败：' + (e?.response?.data?.message || e?.message || ''))
   } finally {
     submitting.value = false
   }
@@ -339,7 +367,11 @@ async function saveSeats() {
     .filter(([, seat]) => seat && seat.trim())
     .map(([deviceId, seatNo]) => ({ deviceId, seatNo: seatNo.trim() }))
   try {
-    await batchSetSeats(selected.value.id, seats)
+    const res = await batchSetSeats(selected.value.id, seats)
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '保存失败')
+      return
+    }
     ElMessage.success('座位号已保存')
     await loadDetail()
   } catch (e: any) {
@@ -359,6 +391,64 @@ async function autoSeats() {
     }
   } catch (e: any) {
     ElMessage.error('自动分配失败：' + (e?.message || ''))
+  }
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function renumberSeatNos() {
+  if (!selected.value) return
+  try {
+    const res = await renumberSeats(selected.value.id)
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '顺序编号失败')
+      return
+    }
+    ElMessage.success(`已按列表顺序编号 ${res.data?.length ?? 0} 台学生机`)
+    await loadDetail()
+  } catch (e: any) {
+    ElMessage.error('顺序编号失败：' + (e?.message || ''))
+  }
+}
+
+async function exportSeats() {
+  if (!selected.value) return
+  try {
+    const blob = await exportClassSeats(selected.value.id)
+    saveBlob(blob, `${selected.value.name}-seats.xlsx`)
+  } catch (e: any) {
+    ElMessage.error('导出失败：' + (e?.message || ''))
+  }
+}
+
+function triggerImportSeats() {
+  if (seatFileInput.value) {
+    seatFileInput.value.value = ''
+    seatFileInput.value.click()
+  }
+}
+
+async function onImportSeats(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file || !selected.value) return
+  try {
+    const res = await importClassSeats(selected.value.id, file)
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '导入失败')
+      return
+    }
+    ElMessage.success(`已导入 ${res.data?.imported ?? 0} 条座位号`)
+    await loadDetail()
+  } catch (e: any) {
+    ElMessage.error('导入失败：' + (e?.response?.data?.message || e?.message || ''))
   }
 }
 
@@ -418,5 +508,6 @@ onMounted(() => {
 .class-name { font-weight: 500; }
 .detail-header { display: flex; justify-content: space-between; align-items: center; }
 .mode-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.hint { color: #909399; font-size: 12px; margin-left: 8px; }
+ .hint { color: #909399; font-size: 12px; margin-left: 8px; }
+ .hidden-file { display: none; }
 </style>

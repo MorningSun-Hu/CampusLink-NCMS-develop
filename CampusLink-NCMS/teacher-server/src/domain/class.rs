@@ -137,12 +137,20 @@ pub async fn assign_students(pool: &SqlitePool, class_id: &str, student_ids: &[S
 pub async fn assign_devices(pool: &SqlitePool, class_id: &str, device_ids: &[String]) -> Result<u64> {
     let mut count = 0u64;
     for did in device_ids {
-        let affected = sqlx::query("UPDATE student_devices SET class_id = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(class_id)
-            .bind(did)
-            .execute(pool)
-            .await?
-            .rows_affected();
+        // Changing class clears the old seat to avoid unique(class_id, seat_no) conflicts.
+        let affected = sqlx::query(
+            r#"UPDATE student_devices
+               SET seat_no = CASE WHEN class_id = ? THEN seat_no ELSE NULL END,
+                   class_id = ?,
+                   updated_at = datetime('now')
+               WHERE id = ?"#
+        )
+        .bind(class_id)
+        .bind(class_id)
+        .bind(did)
+        .execute(pool)
+        .await?
+        .rows_affected();
         count += affected;
     }
     Ok(count)
@@ -175,15 +183,127 @@ fn ip_last_octet(ip: &str) -> Option<u32> {
 }
 
 pub async fn batch_set_seats(pool: &SqlitePool, class_id: &str, seats: &[SeatAssignment]) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized = Vec::new();
     for s in seats {
+        let seat = normalize_seat(&s.seat_no);
+        if seat.is_empty() {
+            continue;
+        }
+        if !seen.insert(seat.clone()) {
+            anyhow::bail!("座位号 {} 重复", seat);
+        }
+        normalized.push((s.device_id.clone(), seat));
+    }
+    if normalized.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = pool.begin().await?;
+    for (device_id, _) in &normalized {
+        let affected = sqlx::query(
+            "UPDATE student_devices SET seat_no = NULL, updated_at = datetime('now') WHERE id = ? AND class_id = ?"
+        )
+        .bind(device_id)
+        .bind(class_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if affected == 0 {
+            anyhow::bail!("设备不属于该班级，无法保存座位号");
+        }
+    }
+    for (device_id, seat) in &normalized {
+        let affected = sqlx::query(
+            "UPDATE student_devices SET seat_no = ?, updated_at = datetime('now') WHERE id = ? AND class_id = ?"
+        )
+        .bind(seat)
+        .bind(device_id)
+        .bind(class_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_seat_constraint)?
+        .rows_affected();
+        if affected == 0 {
+            anyhow::bail!("设备不属于该班级，无法保存座位号");
+        }
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+fn normalize_seat(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Ok(number) = trimmed.parse::<f64>() {
+        if number.fract() == 0.0 && number > 0.0 && number < 1e9 {
+            return format!("{}", number as i64);
+        }
+    }
+    trimmed.to_string()
+}
+
+fn map_seat_constraint(err: sqlx::Error) -> anyhow::Error {
+    let text = err.to_string();
+    if text.contains("UNIQUE") {
+        anyhow::anyhow!("座位号已被该班其他学生机占用")
+    } else {
+        anyhow::Error::from(err)
+    }
+}
+
+fn next_free_seat(taken: &std::collections::HashSet<u32>) -> u32 {
+    let mut n = 1u32;
+    while taken.contains(&n) {
+        n += 1;
+    }
+    n
+}
+
+pub async fn fill_missing_seats(pool: &SqlitePool, class_id: &str) -> Result<Vec<SeatAssignmentResult>> {
+    let rows = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, seat_no FROM student_devices WHERE class_id = ? ORDER BY ip_address ASC, id ASC"
+    )
+    .bind(class_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut taken = std::collections::HashSet::new();
+    for (_, seat) in &rows {
+        if let Some(seat) = seat {
+            let seat = normalize_seat(seat);
+            if let Ok(n) = seat.parse::<u32>() {
+                taken.insert(n);
+            }
+        }
+    }
+
+    let mut assigned = Vec::new();
+    for (device_id, seat) in rows {
+        let existing = seat.as_deref().map(normalize_seat).unwrap_or_default();
+        if !existing.is_empty() {
+            continue;
+        }
+        let n = next_free_seat(&taken);
+        let seat_no = n.to_string();
         sqlx::query("UPDATE student_devices SET seat_no = ?, updated_at = datetime('now') WHERE id = ? AND class_id = ?")
-            .bind(&s.seat_no)
-            .bind(&s.device_id)
+            .bind(&seat_no)
+            .bind(&device_id)
             .bind(class_id)
             .execute(pool)
-            .await?;
+            .await
+            .map_err(map_seat_constraint)?;
+        taken.insert(n);
+        assigned.push(SeatAssignmentResult { device_id, seat_no });
     }
-    Ok(())
+    Ok(assigned)
+}
+
+pub async fn renumber_seats(pool: &SqlitePool, class_id: &str) -> Result<Vec<SeatAssignmentResult>> {
+    sqlx::query("UPDATE student_devices SET seat_no = NULL, updated_at = datetime('now') WHERE class_id = ?")
+        .bind(class_id)
+        .execute(pool)
+        .await?;
+    fill_missing_seats(pool, class_id).await
 }
 
 pub async fn auto_seats_by_ip(pool: &SqlitePool, class_id: &str) -> Result<AutoSeatResult> {
@@ -386,5 +506,86 @@ mod tests {
         assert_eq!(result.assigned.len(), 2);
         assert!(result.assigned.iter().any(|s| s.seat_no == "21"));
         assert!(result.assigned.iter().any(|s| s.seat_no == "22"));
+    }
+
+    #[tokio::test]
+    async fn fill_missing_seats_starts_from_one() {
+        let pool = setup_pool().await;
+        let class = create_class(&pool, "座位班").await.unwrap();
+        let d1 = register_test_device(&pool, "DEV-SEAT-1").await;
+        let d2 = register_test_device(&pool, "DEV-SEAT-2").await;
+        assign_devices(&pool, &class.id, &[d1.clone(), d2.clone()]).await.unwrap();
+
+        let assigned = fill_missing_seats(&pool, &class.id).await.unwrap();
+        assert_eq!(assigned.len(), 2);
+        let mut seats: Vec<_> = assigned.iter().map(|s| s.seat_no.clone()).collect();
+        seats.sort();
+        assert_eq!(seats, vec!["1".to_string(), "2".to_string()]);
+
+        batch_set_seats(&pool, &class.id, &[
+            SeatAssignment { device_id: d1.clone(), seat_no: "1".into() },
+            SeatAssignment { device_id: d2.clone(), seat_no: "2".into() },
+        ])
+            .await
+            .unwrap();
+        let err = batch_set_seats(&pool, &class.id, &[SeatAssignment { device_id: d2.clone(), seat_no: "1".into() }])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("占用") || err.to_string().contains("重复"));
+    }
+
+    #[tokio::test]
+    async fn batch_set_seats_allows_swap() {
+        let pool = setup_pool().await;
+        let class = create_class(&pool, "对调班").await.unwrap();
+        let d1 = register_test_device(&pool, "DEV-SWAP-1").await;
+        let d2 = register_test_device(&pool, "DEV-SWAP-2").await;
+        assign_devices(&pool, &class.id, &[d1.clone(), d2.clone()]).await.unwrap();
+        fill_missing_seats(&pool, &class.id).await.unwrap();
+
+        batch_set_seats(&pool, &class.id, &[
+            SeatAssignment { device_id: d1.clone(), seat_no: "2".into() },
+            SeatAssignment { device_id: d2.clone(), seat_no: "1".into() },
+        ]).await.unwrap();
+
+        let s1: Option<String> = sqlx::query_scalar("SELECT seat_no FROM student_devices WHERE id = ?")
+            .bind(&d1).fetch_one(&pool).await.unwrap();
+        let s2: Option<String> = sqlx::query_scalar("SELECT seat_no FROM student_devices WHERE id = ?")
+            .bind(&d2).fetch_one(&pool).await.unwrap();
+        assert_eq!(s1.as_deref(), Some("2"));
+        assert_eq!(s2.as_deref(), Some("1"));
+    }
+
+    #[tokio::test]
+    async fn batch_set_seats_rejects_device_not_in_class() {
+        let pool = setup_pool().await;
+        let class = create_class(&pool, "本班").await.unwrap();
+        let outsider = register_test_device(&pool, "DEV-OUT").await;
+        let err = batch_set_seats(&pool, &class.id, &[SeatAssignment {
+            device_id: outsider,
+            seat_no: "1".into(),
+        }])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("不属于"));
+    }
+
+    #[tokio::test]
+    async fn moving_device_to_another_class_clears_conflicting_seat() {
+        let pool = setup_pool().await;
+        let class_a = create_class(&pool, "A班").await.unwrap();
+        let class_b = create_class(&pool, "B班").await.unwrap();
+        let d1 = register_test_device(&pool, "DEV-MOVE-1").await;
+        let d2 = register_test_device(&pool, "DEV-KEEP-1").await;
+        assign_devices(&pool, &class_a.id, &[d1.clone()]).await.unwrap();
+        assign_devices(&pool, &class_b.id, &[d2.clone()]).await.unwrap();
+        fill_missing_seats(&pool, &class_a.id).await.unwrap();
+        fill_missing_seats(&pool, &class_b.id).await.unwrap();
+
+        assign_devices(&pool, &class_b.id, &[d1.clone()]).await.unwrap();
+        let assigned = fill_missing_seats(&pool, &class_b.id).await.unwrap();
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(assigned[0].device_id, d1);
+        assert_eq!(assigned[0].seat_no, "2");
     }
 }

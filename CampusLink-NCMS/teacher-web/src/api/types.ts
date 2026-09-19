@@ -131,6 +131,7 @@ export interface UsageQuery {
 export interface InspectionRecord {
   id: string
   device_id: string
+  device_name: string | null
   inspection_type: string
   item_name: string
   status: string

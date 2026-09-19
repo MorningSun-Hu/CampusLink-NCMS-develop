@@ -129,12 +129,13 @@ pub async fn export_inspection_handler(
 
 async fn generate_inspection_csv(pool: &sqlx::SqlitePool) -> anyhow::Result<Vec<u8>> {
     let records = inspection::list_inspections(pool, None, Some(10000)).await?;
-    let mut csv = String::from("ID,设备ID,检查类型,检查项目,状态,描述,检查人,创建时间\n");
+    let mut csv = String::from("ID,设备ID,设备名称,检查类型,检查项目,状态,描述,检查人,创建时间\n");
     for r in records {
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{}\n",
             r.id,
             r.device_id,
+            r.device_name.as_deref().unwrap_or(""),
             r.inspection_type,
             r.item_name,
             r.status,

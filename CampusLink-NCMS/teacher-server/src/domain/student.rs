@@ -94,6 +94,61 @@ pub fn generate_student_no() -> String {
     format!("S{}", &suffix[..8].to_uppercase())
 }
 
+pub async fn find_class_id_by_name(pool: &SqlitePool, name: &str) -> Result<Option<String>> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let id = sqlx::query_scalar::<_, String>("SELECT id FROM classes WHERE name = ?")
+        .bind(trimmed)
+        .fetch_optional(pool)
+        .await?;
+    Ok(id)
+}
+
+pub async fn require_class_and_existing_seat(pool: &SqlitePool, class_id: &str, seat_no: &str) -> Result<(String, String)> {
+    let class_id = class_id.trim().to_string();
+    let seat_no = seat_no.trim().to_string();
+    if class_id.is_empty() {
+        anyhow::bail!("班级为必填项");
+    }
+    if seat_no.is_empty() {
+        anyhow::bail!("座位号为必填项");
+    }
+
+    let class_exists: Option<String> = sqlx::query_scalar("SELECT id FROM classes WHERE id = ?")
+        .bind(&class_id)
+        .fetch_optional(pool)
+        .await?;
+    if class_exists.is_none() {
+        anyhow::bail!("班级不存在");
+    }
+
+    let seat_exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM student_devices WHERE class_id = ? AND TRIM(COALESCE(seat_no, '')) = ?"
+    )
+    .bind(&class_id)
+    .bind(&seat_no)
+    .fetch_optional(pool)
+    .await?;
+    if seat_exists.is_none() {
+        anyhow::bail!("座位号 {} 在该班级中不存在，请先在班级管理中为设备分配该座位", seat_no);
+    }
+
+    Ok((class_id, seat_no))
+}
+
+fn map_student_constraint(err: sqlx::Error) -> anyhow::Error {
+    let text = err.to_string();
+    if text.contains("UNIQUE") && text.contains("seat") {
+        anyhow::anyhow!("该班级座位号已被其他学生占用")
+    } else if text.contains("UNIQUE") {
+        anyhow::anyhow!("学号已存在")
+    } else {
+        anyhow::Error::from(err)
+    }
+}
+
 pub async fn create_student(pool: &SqlitePool, req: CreateStudentRequest) -> Result<StudentResponse> {
     let id = Uuid::new_v4().to_string();
     let student_no = req
@@ -103,6 +158,10 @@ pub async fn create_student(pool: &SqlitePool, req: CreateStudentRequest) -> Res
     let initial_password = req.password.filter(|s| !s.is_empty()).unwrap_or_else(|| "123456".to_string());
     let password_hash = bcrypt::hash(&initial_password, 4)?;
 
+    let class_id = req.class_id.as_deref().unwrap_or("");
+    let seat_no = req.seat_no.as_deref().unwrap_or("");
+    let (class_id, seat_no) = require_class_and_existing_seat(pool, class_id, seat_no).await?;
+
     sqlx::query(
         r#"INSERT INTO students (id, student_no, name, password_hash, seat_no, status, class_id, password_set, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, 'active', ?, 0, datetime('now'), datetime('now'))"#
@@ -111,10 +170,11 @@ pub async fn create_student(pool: &SqlitePool, req: CreateStudentRequest) -> Res
     .bind(&student_no)
     .bind(&req.name)
     .bind(&password_hash)
-    .bind(&req.seat_no)
-    .bind(&req.class_id)
+    .bind(&seat_no)
+    .bind(&class_id)
     .execute(pool)
-    .await?;
+    .await
+    .map_err(map_student_constraint)?;
 
     get_student_by_id(pool, &id).await
 }
@@ -132,7 +192,7 @@ pub async fn get_student_by_id(pool: &SqlitePool, id: &str) -> Result<StudentRes
     Ok(response)
 }
 
-async fn class_name_of(pool: &SqlitePool, class_id: Option<&str>) -> Result<Option<String>> {
+pub async fn class_name_of(pool: &SqlitePool, class_id: Option<&str>) -> Result<Option<String>> {
     match class_id {
         Some(cid) => {
             let name: Option<String> = sqlx::query_scalar("SELECT name FROM classes WHERE id = ?")
@@ -280,6 +340,11 @@ pub async fn update_student(pool: &SqlitePool, id: &str, req: UpdateStudentReque
     let seat_no = req.seat_no.or(existing.seat_no);
     let status = req.status.unwrap_or(existing.status);
     let class_id = req.class_id.or(existing.class_id);
+    let (class_id, seat_no) = require_class_and_existing_seat(
+        pool,
+        class_id.as_deref().unwrap_or(""),
+        seat_no.as_deref().unwrap_or(""),
+    ).await?;
 
     if let Some(password) = req.password {
         let password_hash = bcrypt::hash(&password, 4)?;
@@ -294,7 +359,8 @@ pub async fn update_student(pool: &SqlitePool, id: &str, req: UpdateStudentReque
         .bind(&class_id)
         .bind(id)
         .execute(pool)
-        .await?;
+        .await
+        .map_err(map_student_constraint)?;
     } else {
         sqlx::query(
             "UPDATE students SET student_no = ?, name = ?, seat_no = ?, status = ?, class_id = ?, updated_at = datetime('now') WHERE id = ?"
@@ -306,7 +372,8 @@ pub async fn update_student(pool: &SqlitePool, id: &str, req: UpdateStudentReque
         .bind(&class_id)
         .bind(id)
         .execute(pool)
-        .await?;
+        .await
+        .map_err(map_student_constraint)?;
     }
 
     get_student_by_id(pool, id).await
@@ -329,7 +396,22 @@ pub async fn list_all_students(pool: &SqlitePool) -> Result<Vec<StudentRow>> {
     Ok(rows)
 }
 
-pub async fn import_student(pool: &SqlitePool, student_no: &str, name: &str, password: &str, seat_no: Option<&str>, class_id: Option<&str>) -> Result<()> {
+pub async fn import_student(pool: &SqlitePool, student_no: &str, name: &str, password: &str, seat_no: &str, class_id: &str) -> Result<()> {
+    let (class_id, seat_no) = require_class_and_existing_seat(pool, class_id, seat_no).await?;
+    insert_imported_student(pool, student_no, name, password, &seat_no, &class_id).await
+}
+
+pub async fn insert_imported_student<'e, E>(
+    executor: E,
+    student_no: &str,
+    name: &str,
+    password: &str,
+    seat_no: &str,
+    class_id: &str,
+) -> Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let id = Uuid::new_v4().to_string();
     let password_hash = bcrypt::hash(password, 4)?;
 
@@ -350,7 +432,95 @@ pub async fn import_student(pool: &SqlitePool, student_no: &str, name: &str, pas
     .bind(&password_hash)
     .bind(seat_no)
     .bind(class_id)
-    .execute(pool)
-    .await?;
+    .execute(executor)
+    .await
+    .map_err(map_student_constraint)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::class::{assign_devices, batch_set_seats, create_class, SeatAssignment};
+    use crate::domain::test_support::{register_test_device, setup_pool};
+
+    async fn class_with_seat(pool: &SqlitePool, class_name: &str, seat: &str) -> String {
+        let class = create_class(pool, class_name).await.unwrap();
+        let device_id = register_test_device(pool, &format!("DEV-{}", class_name)).await;
+        assign_devices(pool, &class.id, &[device_id.clone()]).await.unwrap();
+        batch_set_seats(pool, &class.id, &[SeatAssignment { device_id, seat_no: seat.into() }])
+            .await
+            .unwrap();
+        class.id
+    }
+
+    #[tokio::test]
+    async fn create_student_rejects_missing_class_or_seat() {
+        let pool = setup_pool().await;
+        let err = create_student(&pool, CreateStudentRequest {
+            student_no: Some("S1".into()),
+            name: "张三".into(),
+            password: None,
+            seat_no: None,
+            class_id: None,
+        }).await.unwrap_err();
+        assert!(err.to_string().contains("班级为必填项"));
+
+        let class = create_class(&pool, "一班").await.unwrap();
+        let err = create_student(&pool, CreateStudentRequest {
+            student_no: Some("S2".into()),
+            name: "李四".into(),
+            password: None,
+            seat_no: None,
+            class_id: Some(class.id),
+        }).await.unwrap_err();
+        assert!(err.to_string().contains("座位号为必填项"));
+    }
+
+    #[tokio::test]
+    async fn create_student_rejects_seat_not_assigned_to_class_device() {
+        let pool = setup_pool().await;
+        let class = create_class(&pool, "二班").await.unwrap();
+        let err = create_student(&pool, CreateStudentRequest {
+            student_no: Some("S3".into()),
+            name: "王五".into(),
+            password: None,
+            seat_no: Some("1".into()),
+            class_id: Some(class.id),
+        }).await.unwrap_err();
+        assert!(err.to_string().contains("不存在"));
+    }
+
+    #[tokio::test]
+    async fn create_student_succeeds_when_device_seat_exists() {
+        let pool = setup_pool().await;
+        let class_id = class_with_seat(&pool, "三班", "12").await;
+        let created = create_student(&pool, CreateStudentRequest {
+            student_no: Some("S4".into()),
+            name: "赵六".into(),
+            password: None,
+            seat_no: Some("12".into()),
+            class_id: Some(class_id.clone()),
+        }).await.unwrap();
+        assert_eq!(created.student_no, "S4");
+        assert_eq!(created.seat_no.as_deref(), Some("12"));
+        assert_eq!(created.class_id.as_deref(), Some(class_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn import_rolls_back_when_later_row_fails() {
+        let pool = setup_pool().await;
+        let class_id = class_with_seat(&pool, "导入班", "1").await;
+        let mut tx = pool.begin().await.unwrap();
+        insert_imported_student(&mut *tx, "S10", "甲", "123456", "1", &class_id).await.unwrap();
+        let err = insert_imported_student(&mut *tx, "S11", "乙", "123456", "1", &class_id).await.unwrap_err();
+        assert!(err.to_string().contains("占用") || err.to_string().contains("UNIQUE"));
+        drop(tx);
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM students")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
 }

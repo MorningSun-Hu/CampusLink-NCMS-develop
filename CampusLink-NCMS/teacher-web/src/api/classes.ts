@@ -70,6 +70,25 @@ export async function autoAssignSeats(classId: string) {
   return response.data
 }
 
+export async function renumberSeats(classId: string) {
+  const response = await api.post(`/classes/${classId}/seats/renumber`)
+  return response.data
+}
+
+export async function exportClassSeats(classId: string) {
+  const response = await api.get(`/classes/${classId}/seats/export`, { responseType: 'blob' })
+  return response.data as Blob
+}
+
+export async function importClassSeats(classId: string, file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await api.post(`/classes/${classId}/seats/import`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return response.data
+}
+
 export async function resetClassPasswords(classId: string, password?: string) {
   const response = await api.post(`/classes/${classId}/passwords/reset`, { password })
   return response.data

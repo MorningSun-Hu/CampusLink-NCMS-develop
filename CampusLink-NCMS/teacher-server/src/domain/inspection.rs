@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub struct InspectionRow {
     pub id: String,
     pub device_id: String,
+    pub device_name: Option<String>,
     pub student_id: Option<String>,
     pub inspection_type: String,
     pub item_name: String,
@@ -21,6 +22,7 @@ pub struct InspectionRow {
 pub struct InspectionRecord {
     pub id: String,
     pub device_id: String,
+    pub device_name: Option<String>,
     pub student_id: Option<String>,
     pub inspection_type: String,
     pub item_name: String,
@@ -29,13 +31,16 @@ pub struct InspectionRecord {
     pub photo_url: Option<String>,
     pub inspector: Option<String>,
     pub created_at: String,
+    pub is_abnormal: bool,
 }
 
 impl From<InspectionRow> for InspectionRecord {
     fn from(row: InspectionRow) -> Self {
+        let is_abnormal = row.status == "abnormal" || row.status == "missing";
         InspectionRecord {
             id: row.id,
             device_id: row.device_id,
+            device_name: row.device_name,
             student_id: row.student_id,
             inspection_type: row.inspection_type,
             item_name: row.item_name,
@@ -44,6 +49,7 @@ impl From<InspectionRow> for InspectionRecord {
             photo_url: row.photo_url,
             inspector: row.inspector,
             created_at: row.created_at,
+            is_abnormal,
         }
     }
 }
@@ -74,6 +80,7 @@ pub struct InspectionSubmitResponse {
 pub struct AlertRecord {
     pub id: String,
     pub device_id: String,
+    pub device_name: Option<String>,
     pub student_id: Option<String>,
     pub inspection_type: String,
     pub item_name: String,
@@ -92,34 +99,58 @@ pub struct AlertListResponse {
 }
 
 pub async fn submit_inspection(pool: &SqlitePool, device_id: &str, inspection_type: &str, items: &[InspectionItem], is_abnormal: bool) -> Result<InspectionSubmitResponse> {
-    let mut record_ids = Vec::new();
     let mut abnormal_count = 0;
-
     for item in items {
-        let record_id = Uuid::new_v4().to_string();
-
-        if is_abnormal || item.status == "abnormal" || item.status == "missing" {
+        if item.status == "abnormal" || item.status == "missing" {
             abnormal_count += 1;
         }
-
-        sqlx::query(
-            r#"INSERT INTO inspection_records (id, device_id, inspection_type, item_name, status, description, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"#
-        )
-        .bind(&record_id)
-        .bind(device_id)
-        .bind(inspection_type)
-        .bind(&item.item_name)
-        .bind(&item.status)
-        .bind(&item.description)
-        .execute(pool)
-        .await?;
-
-        record_ids.push(record_id);
+    }
+    if is_abnormal && abnormal_count == 0 {
+        abnormal_count = 1;
     }
 
+    let item_name = if items.is_empty() {
+        inspection_type.to_string()
+    } else {
+        items.iter().map(|i| i.item_name.as_str()).collect::<Vec<_>>().join("、")
+    };
+    let description = items
+        .iter()
+        .map(|item| {
+            let label = match item.status.as_str() {
+                "normal" => "正常",
+                "missing" => "缺失",
+                "abnormal" => "异常",
+                other => other,
+            };
+            match &item.description {
+                Some(detail) if !detail.trim().is_empty() => {
+                    format!("{}:{}({})", item.item_name, label, detail.trim())
+                }
+                _ => format!("{}:{}", item.item_name, label),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("；");
+    let status = if abnormal_count > 0 { "abnormal" } else { "normal" };
+    let record_id = Uuid::new_v4().to_string();
+    let description = if description.is_empty() { None } else { Some(description) };
+
+    sqlx::query(
+        r#"INSERT INTO inspection_records (id, device_id, inspection_type, item_name, status, description, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"#
+    )
+    .bind(&record_id)
+    .bind(device_id)
+    .bind(inspection_type)
+    .bind(&item_name)
+    .bind(status)
+    .bind(&description)
+    .execute(pool)
+    .await?;
+
     Ok(InspectionSubmitResponse {
-        record_ids,
+        record_ids: vec![record_id],
         total_items: items.len(),
         abnormal_count,
     })
@@ -128,9 +159,12 @@ pub async fn submit_inspection(pool: &SqlitePool, device_id: &str, inspection_ty
 pub async fn list_inspections(pool: &SqlitePool, inspection_type: Option<&str>, limit: Option<i64>) -> Result<Vec<InspectionRecord>> {
     let limit_val = limit.unwrap_or(50);
 
+    const LIST_BY_TYPE: &str = r#"SELECT i.id, i.device_id, d.device_name, i.student_id, i.inspection_type, i.item_name, i.status, i.description, i.photo_url, i.inspector, i.created_at FROM inspection_records i LEFT JOIN student_devices d ON d.id = i.device_id WHERE i.inspection_type = ? ORDER BY i.created_at DESC LIMIT ?"#;
+    const LIST_ALL: &str = r#"SELECT i.id, i.device_id, d.device_name, i.student_id, i.inspection_type, i.item_name, i.status, i.description, i.photo_url, i.inspector, i.created_at FROM inspection_records i LEFT JOIN student_devices d ON d.id = i.device_id ORDER BY i.created_at DESC LIMIT ?"#;
+
     let rows = if let Some(typ) = inspection_type {
         sqlx::query_as::<_, InspectionRow>(
-            "SELECT * FROM inspection_records WHERE inspection_type = ? ORDER BY created_at DESC LIMIT ?"
+            LIST_BY_TYPE
         )
         .bind(typ)
         .bind(limit_val)
@@ -138,7 +172,7 @@ pub async fn list_inspections(pool: &SqlitePool, inspection_type: Option<&str>, 
         .await?
     } else {
         sqlx::query_as::<_, InspectionRow>(
-            "SELECT * FROM inspection_records ORDER BY created_at DESC LIMIT ?"
+            LIST_ALL
         )
         .bind(limit_val)
         .fetch_all(pool)
@@ -155,14 +189,14 @@ pub async fn list_alerts(pool: &SqlitePool, status: Option<&str>, limit: Option<
 
     let abnormal_rows = if show_all {
         sqlx::query_as::<_, InspectionRow>(
-            r#"SELECT * FROM inspection_records WHERE status IN ('abnormal', 'missing') ORDER BY created_at DESC LIMIT ?"#
+            r#"SELECT i.id, i.device_id, d.device_name, i.student_id, i.inspection_type, i.item_name, i.status, i.description, i.photo_url, i.inspector, i.created_at FROM inspection_records i LEFT JOIN student_devices d ON d.id = i.device_id WHERE i.status IN ('abnormal', 'missing') ORDER BY i.created_at DESC LIMIT ?"#
         )
         .bind(limit_val)
         .fetch_all(pool)
         .await?
     } else {
         sqlx::query_as::<_, InspectionRow>(
-            r#"SELECT * FROM inspection_records WHERE status = ? ORDER BY created_at DESC LIMIT ?"#
+            r#"SELECT i.id, i.device_id, d.device_name, i.student_id, i.inspection_type, i.item_name, i.status, i.description, i.photo_url, i.inspector, i.created_at FROM inspection_records i LEFT JOIN student_devices d ON d.id = i.device_id WHERE i.status = ? ORDER BY i.created_at DESC LIMIT ?"#
         )
         .bind(status.unwrap_or("pending"))
         .bind(limit_val)
@@ -186,6 +220,7 @@ pub async fn list_alerts(pool: &SqlitePool, status: Option<&str>, limit: Option<
         AlertRecord {
             id: r.id,
             device_id: r.device_id,
+            device_name: r.device_name,
             student_id: r.student_id,
             inspection_type: r.inspection_type,
             item_name: r.item_name,
@@ -247,11 +282,13 @@ mod tests {
 
         assert_eq!(resp.total_items, 3);
         assert_eq!(resp.abnormal_count, 2);
-        assert_eq!(resp.record_ids.len(), 3);
+        assert_eq!(resp.record_ids.len(), 1);
 
         let records = list_inspections(&pool, Some("hygiene"), None).await.unwrap();
-        assert_eq!(records.len(), 3);
+        assert_eq!(records.len(), 1);
         assert_eq!(records[0].device_id, device_id);
+        assert_eq!(records[0].device_name.as_deref(), Some("host-DEV-IN-001"));
+        assert!(records[0].description.as_deref().unwrap_or("").contains("keyboard"));
     }
 
     #[tokio::test]
@@ -263,6 +300,10 @@ mod tests {
         let resp = submit_inspection(&pool, &device_id, "check", &items, true).await.unwrap();
 
         assert_eq!(resp.abnormal_count, 1);
+        let records = list_inspections(&pool, Some("check"), None).await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "abnormal");
+        assert!(records[0].is_abnormal);
     }
 
     #[tokio::test]

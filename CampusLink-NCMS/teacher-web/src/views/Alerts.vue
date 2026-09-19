@@ -16,7 +16,12 @@
           </el-select>
         </div>
         <el-table :data="inspections" v-loading="inspLoading" border stripe>
-          <el-table-column prop="device_id" label="设备ID" width="200" />
+          <el-table-column label="设备名称" width="160">
+            <template #default="{ row }">
+              {{ row.device_name || row.device_id || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="device_id" label="设备ID" width="180" />
           <el-table-column prop="inspection_type" label="检查类型">
             <template #default="{ row }">
               <el-tag>{{ inspectionTypeLabel(row.inspection_type) }}</el-tag>

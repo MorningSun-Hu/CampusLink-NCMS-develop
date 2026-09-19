@@ -77,6 +77,12 @@ export async function importStudents(file: File) {
   return response.data
 }
 
-export function getExportUrl() {
-  return '/api/students/export'
+export async function exportStudents() {
+  const response = await api.get('/students/export', { responseType: 'blob' })
+  return response.data as Blob
+}
+
+export async function downloadStudentTemplate() {
+  const response = await api.get('/students/import-template', { responseType: 'blob' })
+  return response.data as Blob
 }

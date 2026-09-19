@@ -7,6 +7,7 @@
         <el-select v-model="selectedClassId" placeholder="按班级筛选" clearable style="width: 180px" @change="loadStudents">
           <el-option v-for="c in classes" :key="c.id" :label="c.name" :value="c.id" />
         </el-select>
+        <el-button @click="handleDownloadTemplate">下载模板</el-button>
         <el-upload :show-file-list="false" :before-upload="handleImport" accept=".xlsx" style="display: inline-flex">
           <el-button type="warning">批量导入</el-button>
         </el-upload>
@@ -68,16 +69,18 @@
         <el-form-item label="姓名" prop="name">
           <el-input v-model="form.name" placeholder="请输入姓名" />
         </el-form-item>
-        <el-form-item label="班级">
-          <el-select v-model="form.classId" placeholder="选填" clearable style="width: 100%">
+        <el-form-item label="班级" prop="classId">
+          <el-select v-model="form.classId" placeholder="请选择班级" style="width: 100%">
             <el-option v-for="c in classes" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="密码" :prop="isEdit ? '' : 'password'">
           <el-input v-model="form.password" placeholder="请输入密码（留空不修改）" show-password />
         </el-form-item>
-        <el-form-item label="座位号">
-          <el-input v-model="form.seatNo" placeholder="选填" />
+        <el-form-item label="座位号" prop="seatNo">
+          <el-select v-model="form.seatNo" placeholder="请选择已分配的座位号" filterable style="width: 100%" :disabled="!form.classId">
+            <el-option v-for="seat in seatOptions" :key="seat" :label="seat" :value="seat" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -89,9 +92,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import { listStudents, createStudent, updateStudent, deleteStudent, resetStudentPassword, importStudents, getExportUrl, type Student } from '@/api/students'
-import { listClasses, type ClassInfo } from '@/api/classes'
+import { ref, reactive, watch, onMounted } from 'vue'
+import { listStudents, createStudent, updateStudent, deleteStudent, resetStudentPassword, importStudents, exportStudents, downloadStudentTemplate, type Student } from '@/api/students'
+import { listClasses, listClassDevices, type ClassInfo } from '@/api/classes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const students = ref<Student[]>([])
@@ -117,9 +120,51 @@ const form = reactive({
   seatNo: '',
 })
 
+const seatOptions = ref<string[]>([])
+
 const rules = {
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
+  classId: [{ required: true, message: '请选择班级', trigger: 'change' }],
+  seatNo: [{ required: true, message: '请选择座位号', trigger: 'change' }],
 }
+
+function apiErrorMessage(error: unknown, fallback: string) {
+  const data = (error as { response?: { data?: { message?: string } } })?.response?.data
+  return data?.message || fallback
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function loadSeats(classId: string) {
+  if (!classId) {
+    seatOptions.value = []
+    return
+  }
+  try {
+    const result = await listClassDevices(classId)
+    const seats = (result.data || [])
+      .map((d) => (d.seatNo || '').trim())
+      .filter((s) => s.length > 0)
+    seatOptions.value = Array.from(new Set(seats)).sort()
+  } catch (error) {
+    console.error('Load seats failed:', error)
+    seatOptions.value = []
+  }
+}
+
+watch(() => form.classId, async (classId, previous) => {
+  await loadSeats(classId)
+  if (previous !== undefined && !seatOptions.value.includes(form.seatNo)) {
+    form.seatNo = ''
+  }
+})
 
 const loadClasses = async () => {
   try {
@@ -179,25 +224,37 @@ const handleSubmit = async () => {
   submitting.value = true
   try {
     if (isEdit.value) {
-      const data: any = { name: form.name, seatNo: form.seatNo || undefined, classId: form.classId || undefined }
+      const data: { name: string; seatNo: string; classId: string; password?: string } = {
+        name: form.name,
+        seatNo: form.seatNo,
+        classId: form.classId,
+      }
       if (form.password) data.password = form.password
-      await updateStudent(editingId.value, data)
+      const result = await updateStudent(editingId.value, data)
+      if (result.code !== 0) {
+        ElMessage.error(result.message || '操作失败')
+        return
+      }
       ElMessage.success('更新成功')
     } else {
-      await createStudent({
+      const result = await createStudent({
         studentNo: form.studentNo || undefined,
         name: form.name,
         password: form.password || undefined,
-        seatNo: form.seatNo || undefined,
-        classId: form.classId || undefined,
+        seatNo: form.seatNo,
+        classId: form.classId,
       })
+      if (result.code !== 0) {
+        ElMessage.error(result.message || '操作失败')
+        return
+      }
       ElMessage.success('创建成功')
     }
     dialogVisible.value = false
     loadStudents()
   } catch (error) {
     console.error('Submit failed:', error)
-    ElMessage.error('操作失败')
+    ElMessage.error(apiErrorMessage(error, '操作失败'))
   } finally {
     submitting.value = false
   }
@@ -232,20 +289,34 @@ const handleDelete = async (row: Student) => {
 const handleImport = async (file: File) => {
   try {
     const result = await importStudents(file)
-    if (result.data?.success) {
+    if (result.code === 0 && result.data?.success) {
       ElMessage.success(`成功导入 ${result.data.imported} 名学生`)
       loadStudents()
     } else {
-      ElMessage.error('导入失败')
+      ElMessage.error(result.message || '导入失败')
     }
   } catch (error) {
-    ElMessage.error('导入失败')
+    ElMessage.error(apiErrorMessage(error, '导入失败'))
   }
   return false
 }
 
-const handleExport = () => {
-  window.open(getExportUrl(), '_blank')
+const handleDownloadTemplate = async () => {
+  try {
+    const blob = await downloadStudentTemplate()
+    saveBlob(blob, 'students-template.xlsx')
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '下载模板失败'))
+  }
+}
+
+const handleExport = async () => {
+  try {
+    const blob = await exportStudents()
+    saveBlob(blob, 'students.xlsx')
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '导出失败'))
+  }
 }
 
 onMounted(() => { loadClasses(); loadStudents() })
