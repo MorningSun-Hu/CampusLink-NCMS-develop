@@ -2,18 +2,20 @@
 mod keyhook_impl {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VK_APPS,
         VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_F1, VK_F4, VK_F11, VK_LCONTROL, VK_LMENU, VK_LWIN,
-        VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB,
+        VK_LSHIFT, VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
+        VK_SPACE, VK_TAB,
         RegisterHotKey,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW,
-        SystemParametersInfoW, TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG,
-        SPI_SETSCREENSAVERRUNNING, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL,
+        EnumWindows, GetClassNameW, SetWindowPos, TranslateMessage, UnhookWindowsHookEx,
+        HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        WH_KEYBOARD_LL,
         WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
@@ -50,6 +52,9 @@ mod keyhook_impl {
     }
 
     fn should_block(vk: u32, flags: u32) -> bool {
+        if vk == VK_SHIFT.0 as u32 || vk == VK_LSHIFT.0 as u32 || vk == VK_RSHIFT.0 as u32 {
+            return false;
+        }
         if vk == VK_LWIN.0 as u32 || vk == VK_RWIN.0 as u32 || vk == VK_APPS.0 as u32 {
             return true;
         }
@@ -161,15 +166,43 @@ mod keyhook_impl {
         }
     }
 
-    fn set_screensaver_running(on: bool) {
-        unsafe {
-            let _ = SystemParametersInfoW(
-                SPI_SETSCREENSAVERRUNNING,
-                u32::from(on),
-                None,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-            );
+    fn is_ime_class(name: &str) -> bool {
+        let upper = name.to_ascii_uppercase();
+        upper.contains("IME")
+            || upper.contains("CICERO")
+            || upper.contains("CANDIDATE")
+            || upper.contains("TSF")
+    }
+
+    unsafe extern "system" fn raise_ime_enum(hwnd: HWND, _lparam: LPARAM) -> BOOL {
+        let mut buf = [0u16; 256];
+        let len = GetClassNameW(hwnd, &mut buf);
+        if len > 0 {
+            let class = String::from_utf16_lossy(&buf[..len as usize]);
+            if is_ime_class(&class) {
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
         }
+        BOOL(1)
+    }
+
+    fn start_ime_raiser() {
+        std::thread::spawn(|| {
+            while GUARDS_ON.load(Ordering::SeqCst) {
+                unsafe {
+                    let _ = EnumWindows(Some(raise_ime_enum), LPARAM(0));
+                }
+                std::thread::sleep(Duration::from_millis(80));
+            }
+        });
     }
 
     fn silent_taskkill(image: &str) {
@@ -197,8 +230,8 @@ mod keyhook_impl {
             return;
         }
         GUARDS_ON.store(true, Ordering::SeqCst);
-        set_screensaver_running(true);
         start_taskmgr_guard();
+        start_ime_raiser();
         std::thread::spawn(|| {
             unsafe {
                 let module = GetModuleHandleW(None).unwrap_or_default();
@@ -224,7 +257,6 @@ mod keyhook_impl {
 
     pub fn stop() {
         GUARDS_ON.store(false, Ordering::SeqCst);
-        set_screensaver_running(false);
     }
 }
 

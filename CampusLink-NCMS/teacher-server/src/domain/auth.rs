@@ -33,7 +33,7 @@ pub struct StudentLoginRow {
 
 #[derive(Debug, Deserialize)]
 pub struct StudentLoginRequest {
-    /// 学号或姓名
+    /// 学号
     pub student_no: String,
     pub password: String,
 }
@@ -142,9 +142,8 @@ pub async fn login(pool: &SqlitePool, req: &LoginRequest) -> Result<LoginRespons
 pub async fn student_login(pool: &SqlitePool, req: &StudentLoginRequest) -> Result<StudentLoginResponse> {
     let student = sqlx::query_as::<_, StudentLoginRow>(
         "SELECT id, student_no, name, password_hash, status, password_set
-         FROM students WHERE student_no = ? OR name = ? LIMIT 1"
+         FROM students WHERE student_no = ? LIMIT 1"
     )
-    .bind(&req.student_no)
     .bind(&req.student_no)
     .fetch_optional(pool)
     .await?
@@ -366,9 +365,14 @@ mod tests {
         .await
         .unwrap();
 
-        // 初始密码登录，password_set 为 false
-        let resp = student_login(&pool, &StudentLoginRequest {
+        // 姓名不能登录；用学号+初始密码登录，password_set 为 false
+        assert!(student_login(&pool, &StudentLoginRequest {
             student_no: "王五".to_string(),
+            password: "init123".to_string(),
+        }).await.is_err());
+
+        let resp = student_login(&pool, &StudentLoginRequest {
+            student_no: "2026009".to_string(),
             password: "init123".to_string(),
         }).await.unwrap();
         assert!(!resp.password_set);
@@ -417,6 +421,30 @@ mod tests {
         let result = student_login(&pool, &StudentLoginRequest {
             student_no: "9999999".to_string(),
             password: "whatever".to_string(),
+        }).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn student_login_rejects_name_credential() {
+        let pool = setup_pool().await;
+        let password_hash = bcrypt::hash("stu123", 4).unwrap();
+        sqlx::query(
+            "INSERT INTO students (id, student_no, name, password_hash, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'active', datetime('now'), datetime('now'))"
+        )
+        .bind("stu-name")
+        .bind("2026010")
+        .bind("赵六")
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let result = student_login(&pool, &StudentLoginRequest {
+            student_no: "赵六".to_string(),
+            password: "stu123".to_string(),
         }).await;
 
         assert!(result.is_err());

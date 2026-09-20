@@ -11,6 +11,7 @@
         <el-upload :show-file-list="false" :before-upload="handleImport" accept=".xlsx" style="display: inline-flex">
           <el-button type="warning">批量导入</el-button>
         </el-upload>
+        <el-button type="warning" @click="resetClassPasswordsBatch">批量重置密码</el-button>
         <el-button type="success" @click="handleExport">导出 Excel</el-button>
         <el-button type="primary" @click="showCreateDialog">新增学生</el-button>
       </div>
@@ -94,7 +95,7 @@
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted } from 'vue'
 import { listStudents, createStudent, updateStudent, deleteStudent, resetStudentPassword, importStudents, exportStudents, downloadStudentTemplate, type Student } from '@/api/students'
-import { listClasses, listClassDevices, type ClassInfo } from '@/api/classes'
+import { listClasses, listClassDevices, resetClassPasswords, type ClassInfo } from '@/api/classes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const students = ref<Student[]>([])
@@ -271,6 +272,27 @@ const handleResetPassword = async (row: Student) => {
     ElMessage.success('密码已重置为初始密码')
     loadStudents()
   } catch (error) {
+    // cancelled
+  }
+}
+
+async function resetClassPasswordsBatch() {
+  if (!selectedClassId.value) {
+    ElMessage.warning('请先筛选班级')
+    return
+  }
+  const cls = classes.value.find((c) => c.id === selectedClassId.value)
+  const label = cls?.name || '当前班级'
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `为「${label}」内所有学生设置初始密码，留空则重置为 123456`,
+      '批量重置密码',
+      { inputPlaceholder: '123456', confirmButtonText: '确定', cancelButtonText: '取消' }
+    )
+    await resetClassPasswords(selectedClassId.value, value || undefined)
+    ElMessage.success('密码已重置')
+    await loadStudents()
+  } catch {
     // cancelled
   }
 }

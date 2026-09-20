@@ -1,14 +1,10 @@
 use anyhow::Result;
 use std::process::Command;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use tracing::{info, error, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-static EXIT_COUNTER: AtomicU32 = AtomicU32::new(0);
-const MAX_EXIT_COUNT: u32 = 10;
 
 fn init_runtime() -> Result<()> {
     let exe_dir = std::env::current_exe()?
@@ -46,20 +42,10 @@ async fn main() -> Result<()> {
         for proc in &guard_processes {
             let is_running = check_process_running(proc.name);
             if !is_running {
-                let count = EXIT_COUNTER.load(Ordering::Relaxed);
-                if count >= MAX_EXIT_COUNT {
-                    error!(
-                        "{} exit count exceeded max ({}), stopping auto-restart",
-                        proc.name, MAX_EXIT_COUNT
-                    );
-                    continue;
-                }
-
                 warn!("{} is not running, attempting restart...", proc.name);
                 match start_process(proc.executable) {
                     Ok(_) => {
                         info!("{} restarted successfully", proc.name);
-                        EXIT_COUNTER.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(e) => error!("Failed to restart {}: {}", proc.name, e),
                 }
@@ -67,9 +53,8 @@ async fn main() -> Result<()> {
         }
 
         info!(
-            "Guard check complete: student={}, exit_count={}",
+            "Guard check complete: student={}",
             check_process_running("student"),
-            EXIT_COUNTER.load(Ordering::Relaxed),
         );
 
         tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;

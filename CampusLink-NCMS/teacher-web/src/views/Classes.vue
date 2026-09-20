@@ -39,22 +39,7 @@
               <div>
                 <el-button size="small" @click="openAssignStudents">添加学生</el-button>
                 <el-button size="small" @click="openAssignDevices">添加学生机</el-button>
-                <el-button size="small" type="warning" @click="resetPasswords">批量重置密码</el-button>
               </div>
-            </div>
-
-            <el-divider content-position="left">模式切换</el-divider>
-            <div class="mode-actions">
-              <el-button
-                v-for="m in modes"
-                :key="m.value"
-                :type="selectedMode === m.value ? 'primary' : 'default'"
-                size="small"
-                @click="changeMode(m.value)"
-              >
-                {{ m.label }}
-              </el-button>
-              <span class="hint">授课模式需班级内已有学生，切换后自动下发签到</span>
             </div>
 
             <el-divider content-position="left">学生（{{ classStudents.length }}）</el-divider>
@@ -163,7 +148,6 @@ import {
   listClasses, createClass, updateClass, deleteClass,
   listClassStudents, assignStudents, listClassDevices, assignDevices,
   batchSetSeats, autoAssignSeats, renumberSeats, exportClassSeats, importClassSeats,
-  resetClassPasswords, switchClassMode,
   type ClassInfo, type SeatAssignment,
 } from '@/api/classes'
 import { listStudents, type Student } from '@/api/students'
@@ -171,7 +155,6 @@ import { listDevices, type Device } from '@/api/devices'
 
 const classes = ref<ClassInfo[]>([])
 const selected = ref<ClassInfo | null>(null)
-const selectedMode = ref('')
 const classStudents = ref<Student[]>([])
 const classDevices = ref<Device[]>([])
 const detailLoading = ref(false)
@@ -216,7 +199,6 @@ async function loadClasses() {
 
 async function selectClass(c: ClassInfo) {
   selected.value = c
-  selectedMode.value = ''
   seatEdits.value = {}
   await loadDetail()
 }
@@ -452,44 +434,6 @@ async function onImportSeats(event: Event) {
   }
 }
 
-async function resetPasswords() {
-  if (!selected.value) return
-  try {
-    const { value } = await ElMessageBox.prompt(
-      '为班级内所有学生设置初始密码，留空则重置为 123456',
-      '批量重置密码',
-      { inputPlaceholder: '123456', confirmButtonText: '确定', cancelButtonText: '取消' }
-    )
-    await resetClassPasswords(selected.value.id, value || undefined)
-    ElMessage.success('密码已重置')
-    await loadDetail()
-  } catch {
-    // cancelled
-  }
-}
-
-async function changeMode(mode: string) {
-  if (!selected.value) return
-  try {
-    const res = await switchClassMode(selected.value.id, mode)
-    if (res.code !== 0) {
-      ElMessage.error(res.message || '切换失败')
-      return
-    }
-    selectedMode.value = mode
-    const teachingCount = res.data?.teachingCount ?? 0
-    const lockedCount = res.data?.lockedCount ?? 0
-    if (mode === 'teaching') {
-      ElMessage.success(`授课模式完成：${teachingCount} 台进入授课，${lockedCount} 台进入锁定`)
-    } else {
-      ElMessage.success(`已切换到${modeLabel(mode)}`)
-    }
-    await loadDetail()
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || e?.message || '切换失败')
-  }
-}
-
 onMounted(() => {
   loadClasses()
 })
@@ -507,7 +451,5 @@ onMounted(() => {
 .class-item.active { background: #ecf5ff; }
 .class-name { font-weight: 500; }
 .detail-header { display: flex; justify-content: space-between; align-items: center; }
-.mode-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
- .hint { color: #909399; font-size: 12px; margin-left: 8px; }
  .hidden-file { display: none; }
 </style>

@@ -28,6 +28,24 @@ impl ToString for ModeType {
     }
 }
 
+pub fn normalize_local_mode(mode: &str) -> String {
+    match mode {
+        "open" | "teaching" | "exam" | "locked" => mode.to_string(),
+        _ => "open".to_string(),
+    }
+}
+
+/// 连上教师机后：本地授课且教师机已不是授课则锁定，其余跟随教师机。
+pub fn resolve_synced_mode(local_mode: &str, teacher_mode: &str) -> String {
+    if local_mode == "teaching" && teacher_mode != "teaching" {
+        "locked".to_string()
+    } else if matches!(teacher_mode, "open" | "teaching" | "exam" | "locked") {
+        teacher_mode.to_string()
+    } else {
+        local_mode.to_string()
+    }
+}
+
 /// 处理模式切换命令
 pub async fn handle_mode_switch(
     config: &mut Config,
@@ -54,8 +72,10 @@ pub async fn handle_mode_switch(
             config.lock_pid = None;
         }
         ModeType::Exam => {
-            info!("Switching to Exam mode - enabling exam lockdown");
-            enable_exam_mode(config, unlock_tx).await?;
+            info!("Switching to Exam mode - desktop usable, no lock overlay");
+            disable_all_locks().await?;
+            config.is_locked = false;
+            config.lock_pid = None;
         }
         ModeType::Locked => {
             info!("Switching to Locked mode - full lockdown");
@@ -112,6 +132,7 @@ pub fn resolve_restore_mode(config: &Config, hint: &str) -> String {
 /// Kill the lock overlay and restore `restore_mode`.
 /// Returns true when admission UI should start (full mode-switch lock, not overlay).
 pub fn apply_unlock_restore(config: &mut Config, restore_mode: String) -> bool {
+    let was_locked = config.is_locked || config.current_mode == "locked";
     let overlay = config.lock_is_overlay;
     kill_lock_process();
     config.is_locked = false;
@@ -121,7 +142,11 @@ pub fn apply_unlock_restore(config: &mut Config, restore_mode: String) -> bool {
     if let Err(e) = config.save() {
         error!("Failed to save config after unlock restore: {}", e);
     }
-    !overlay && matches!(restore_mode.as_str(), "open" | "teaching")
+    should_start_admission_after_unlock(was_locked, overlay, &restore_mode)
+}
+
+pub fn should_start_admission_after_unlock(was_locked: bool, overlay: bool, restore_mode: &str) -> bool {
+    was_locked && !overlay && matches!(restore_mode, "open" | "teaching")
 }
 
 pub fn kill_lock_process() {
@@ -143,13 +168,6 @@ pub fn kill_lock_process() {
             .stderr(Stdio::null())
             .status();
     }
-}
-
-/// 考试模式：全屏锁定，禁止切换应用
-async fn enable_exam_mode(config: &mut Config, unlock_tx: &Option<mpsc::UnboundedSender<String>>) -> Result<()> {
-    info!("Enabling Exam mode - exam lockdown active");
-    spawn_lock_screen(config, unlock_tx).await?;
-    Ok(())
 }
 
 /// 锁定模式：完全锁定
@@ -228,5 +246,43 @@ pub fn parse_mode(mode_str: &str) -> ModeType {
         "exam" => ModeType::Exam,
         "locked" => ModeType::Locked,
         _ => ModeType::Open,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_local_mode_defaults_unknown_to_open() {
+        assert_eq!(normalize_local_mode(""), "open");
+        assert_eq!(normalize_local_mode("foo"), "open");
+        assert_eq!(normalize_local_mode("teaching"), "teaching");
+        assert_eq!(normalize_local_mode("locked"), "locked");
+    }
+
+    #[test]
+    fn resolve_synced_mode_locks_when_teaching_ended() {
+        assert_eq!(resolve_synced_mode("teaching", "open"), "locked");
+        assert_eq!(resolve_synced_mode("teaching", "exam"), "locked");
+        assert_eq!(resolve_synced_mode("teaching", "locked"), "locked");
+        assert_eq!(resolve_synced_mode("teaching", "teaching"), "teaching");
+    }
+
+    #[test]
+    fn resolve_synced_mode_follows_teacher_otherwise() {
+        assert_eq!(resolve_synced_mode("open", "exam"), "exam");
+        assert_eq!(resolve_synced_mode("locked", "open"), "open");
+        assert_eq!(resolve_synced_mode("open", "unknown"), "open");
+    }
+
+    #[test]
+    fn unlock_skips_admission_when_not_locked() {
+        assert!(!should_start_admission_after_unlock(false, false, "teaching"));
+        assert!(!should_start_admission_after_unlock(false, false, "open"));
+        assert!(!should_start_admission_after_unlock(true, true, "teaching"));
+        assert!(should_start_admission_after_unlock(true, false, "teaching"));
+        assert!(should_start_admission_after_unlock(true, false, "open"));
+        assert!(!should_start_admission_after_unlock(true, false, "exam"));
     }
 }

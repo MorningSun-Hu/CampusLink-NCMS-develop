@@ -54,6 +54,28 @@ pub async fn register_device(
     }
 }
 
+pub async fn fetch_teacher_mode(base_url: &str, device_id: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct AttendanceContext {
+        mode: String,
+    }
+
+    let client = Client::new();
+    let url = format!("{}/api/attendance/context?device_id={}", base_url, device_id);
+    let response = client
+        .get(&url)
+        .send()
+        .await?
+        .json::<ApiResponse<AttendanceContext>>()
+        .await?;
+
+    response
+        .data
+        .map(|ctx| ctx.mode)
+        .ok_or_else(|| anyhow::anyhow!("Fetch teacher mode failed: {}", response.message))
+}
+
 pub fn generate_machine_fingerprint() -> String {
     // 简单实现，生产环境需要更复杂的指纹生成
     format!("fingerprint-{}", uuid::Uuid::new_v4())
@@ -81,7 +103,7 @@ fn get_local_ip() -> String {
     }
 }
 
-pub async fn collect_and_register(config: &mut Config) -> Result<()> {
+pub async fn collect_and_register(config: &mut Config) -> Result<String> {
     let client = Client::new();
     
     // 采集本机信息
@@ -92,7 +114,8 @@ pub async fn collect_and_register(config: &mut Config) -> Result<()> {
         .map(|m| m.to_string())
         .unwrap_or_else(|| "00:00:00:00:00:00".to_string());
     let machine_fingerprint = generate_machine_fingerprint();
-    let device_code = format!("DEV-{}", hostname[..8].to_uppercase());
+    let prefix: String = hostname.chars().take(8).collect::<String>().to_uppercase();
+    let device_code = format!("DEV-{}", prefix);
 
     info!("Collecting machine info: hostname={}, ip={}, mac={}", hostname, ip_address, mac_address);
 
@@ -109,12 +132,11 @@ pub async fn collect_and_register(config: &mut Config) -> Result<()> {
 
     config.device_id = Some(response.device_id);
     config.teacher_fingerprint = Some(response.teacher_fingerprint);
-    config.current_mode = response.initial_mode.clone();
     config.heartbeat_interval_seconds = response.heartbeat_interval_seconds as u64;
     config.session_key = Some(response.session_key);
     config.save()?;
 
     info!("Registration completed, device_id: {}", config.device_id.as_ref().unwrap());
 
-    Ok(())
+    Ok(response.initial_mode)
 }

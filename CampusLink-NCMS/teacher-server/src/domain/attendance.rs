@@ -111,10 +111,10 @@ fn build_query(query: &AttendanceQuery) -> QueryBuilder<'_, Sqlite> {
         builder.push(" AND a.status = ").push_bind(status);
     }
     if let Some(start_date) = query.start_date.as_deref().filter(|v| !v.is_empty()) {
-        builder.push(" AND date(a.check_in_time) >= ").push_bind(start_date);
+        builder.push(" AND date(a.check_in_time, '+8 hours') >= ").push_bind(start_date);
     }
     if let Some(end_date) = query.end_date.as_deref().filter(|v| !v.is_empty()) {
-        builder.push(" AND date(a.check_in_time) <= ").push_bind(end_date);
+        builder.push(" AND date(a.check_in_time, '+8 hours') <= ").push_bind(end_date);
     }
     builder
 }
@@ -288,7 +288,7 @@ pub async fn check_in(
         }
 
         let seat_snapshot = student_seat.or_else(|| device_seat.clone());
-        let usage_record_id = usage::start_session(
+        let usage_record_id = usage::reuse_or_start_session(
             pool,
             StartSessionParams {
                 device_id,
@@ -302,6 +302,43 @@ pub async fn check_in(
             },
         )
         .await?;
+
+        let today = crate::domain::time_util::beijing_today();
+        let existing: Option<(String, Option<String>)> = sqlx::query_as(
+            r#"SELECT id, usage_record_id FROM attendance_records
+               WHERE student_id = ? AND date(check_in_time, '+8 hours') = ?"#
+        )
+        .bind(&student_pk)
+        .bind(&today)
+        .fetch_optional(pool)
+        .await?;
+        if let Some((record_id, _)) = existing {
+            sqlx::query(
+                r#"UPDATE attendance_records
+                   SET device_id = ?, check_in_time = ?, status = 'present',
+                       seat_no = ?, usage_record_id = ?
+                   WHERE id = ?"#
+            )
+            .bind(device_id)
+            .bind(&check_in_time)
+            .bind(&seat_snapshot)
+            .bind(&usage_record_id)
+            .bind(&record_id)
+            .execute(pool)
+            .await?;
+
+            if let Some(insp) = inspection.as_ref() {
+                if let Err(e) = persist_checkin_inspection(pool, device_id, insp).await {
+                    tracing::warn!("Persist check-in inspection failed: {}", e);
+                }
+            }
+
+            return Ok(CheckInResponse {
+                record_id,
+                status: "present".to_string(),
+                usage_record_id: Some(usage_record_id),
+            });
+        }
 
         let record_id = Uuid::new_v4().to_string();
         sqlx::query(
@@ -338,7 +375,7 @@ pub async fn check_in(
         .unwrap_or("未知用户")
         .to_string();
 
-    let usage_record_id = usage::start_session(
+    let usage_record_id = usage::reuse_or_start_session(
         pool,
         StartSessionParams {
             device_id,
@@ -396,14 +433,14 @@ pub async fn get_statistics(pool: &SqlitePool, date: Option<&str>) -> Result<Att
 async fn count_by_status(pool: &SqlitePool, date: Option<&str>, status: &str) -> Result<i64> {
     let sql = if status == "total" {
         format!(
-            "SELECT COUNT(*) FROM attendance_records a WHERE date(a.check_in_time) = {} {}",
-            if date.is_some() { "date(?)" } else { "date('now')" },
+            "SELECT COUNT(*) FROM attendance_records a WHERE date(a.check_in_time, '+8 hours') = {} {}",
+            if date.is_some() { "?" } else { "date('now', '+8 hours')" },
             EXCLUDE_OPEN
         )
     } else {
         format!(
-            "SELECT COUNT(*) FROM attendance_records a WHERE date(a.check_in_time) = {} AND a.status = '{}' {}",
-            if date.is_some() { "date(?)" } else { "date('now')" },
+            "SELECT COUNT(*) FROM attendance_records a WHERE date(a.check_in_time, '+8 hours') = {} AND a.status = '{}' {}",
+            if date.is_some() { "?" } else { "date('now', '+8 hours')" },
             status,
             EXCLUDE_OPEN
         )
@@ -479,7 +516,7 @@ pub async fn attendance_board(
     let date = date
         .filter(|v| !v.trim().is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+        .unwrap_or_else(crate::domain::time_util::beijing_today);
 
     let class_name: Option<String> = match class_id {
         Some(id) => sqlx::query_scalar("SELECT name FROM classes WHERE id = ?")
@@ -506,10 +543,9 @@ pub async fn attendance_board(
         r#"SELECT a.student_id, a.check_in_time, a.status, a.device_id, d.device_name, a.seat_no
            FROM attendance_records a
            LEFT JOIN student_devices d ON d.id = a.device_id
-           WHERE date(a.check_in_time) = date("#,
+           WHERE date(a.check_in_time, '+8 hours') = "#,
     );
     records_builder.push_bind(&date);
-    records_builder.push(")");
     records_builder.push(EXCLUDE_OPEN);
     records_builder.push(" AND a.student_id IS NOT NULL");
     if let Some(id) = class_id.filter(|v| !v.is_empty()) {
@@ -731,6 +767,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn teaching_check_in_rejects_missing_student_id() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-TEACH-NO-SID").await;
+        crate::domain::device::update_device_mode(&pool, &device_id, "teaching").await.unwrap();
+
+        let result = check_in(&pool, &device_id, None, Some(1_700_000_000), None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn attendance_board_counts_present_and_absent() {
         let pool = setup_pool().await;
         let class = crate::domain::class::create_class(&pool, "一班").await.unwrap();
@@ -780,5 +826,55 @@ mod tests {
         crate::domain::device::update_device_mode(&pool, &device_id, "locked").await.unwrap();
         let ctx = attendance_context(&pool, &device_id).await.unwrap();
         assert!(!ctx.requires_checkin);
+    }
+
+    #[tokio::test]
+    async fn teaching_check_in_same_day_reuses_record() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-DUP-1").await;
+        let student_id = create_test_student(&pool, "STU-DUP-1").await;
+        make_teaching(&pool, &device_id, &student_id, "3").await;
+
+        let first = check_in(&pool, &device_id, Some(&student_id), None, None).await.unwrap();
+        let second = check_in(&pool, &device_id, Some(&student_id), None, None).await.unwrap();
+        assert_eq!(first.record_id, second.record_id);
+
+        let records = list_attendance(&pool, &AttendanceQuery::default()).await.unwrap();
+        assert_eq!(records.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn open_check_in_same_name_reuses_usage() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-DUP-OPEN").await;
+
+        check_in(&pool, &device_id, Some("张三"), None, None).await.unwrap();
+        check_in(&pool, &device_id, Some("张三"), None, None).await.unwrap();
+
+        let usage = usage::list_usage(&pool, &usage::UsageQuery::default()).await.unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].user_name, "张三");
+        assert!(usage[0].end_time.is_none());
+    }
+
+    #[tokio::test]
+    async fn attendance_board_uses_beijing_calendar_day() {
+        let pool = setup_pool().await;
+        let class = crate::domain::class::create_class(&pool, "时区班").await.unwrap();
+        let s1 = create_test_student(&pool, "STU-TZ-1").await;
+        crate::domain::class::assign_students(&pool, &class.id, &[s1.clone()]).await.unwrap();
+        let device_id = register_test_device(&pool, "DEV-TZ-1").await;
+        make_teaching(&pool, &device_id, &s1, "1").await;
+
+        let ts = chrono::NaiveDateTime::parse_from_str("2026-09-20 23:00:00", "%Y-%m-%d %H:%M:%S")
+            .unwrap()
+            .and_utc()
+            .timestamp() as u64;
+        check_in(&pool, &device_id, Some(&s1), Some(ts), None).await.unwrap();
+
+        let board = attendance_board(&pool, Some(&class.id), Some("2026-09-21")).await.unwrap();
+        assert_eq!(board.present_count, 1);
+        let utc_day = attendance_board(&pool, Some(&class.id), Some("2026-09-20")).await.unwrap();
+        assert_eq!(utc_day.present_count, 0);
     }
 }

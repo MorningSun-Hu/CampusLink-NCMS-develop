@@ -23,3 +23,12 @@ pub fn to_rfc3339_opt(value: Option<&str>) -> Option<String> {
         .filter(|v| !v.is_empty())
         .map(to_rfc3339)
 }
+
+/// 当前东八区日历日 `YYYY-MM-DD`。
+pub fn beijing_today() -> String {
+    beijing_now().format("%Y-%m-%d").to_string()
+}
+
+fn beijing_now() -> chrono::DateTime<chrono::Utc> {
+    chrono::Utc::now() + chrono::Duration::hours(8)
+}

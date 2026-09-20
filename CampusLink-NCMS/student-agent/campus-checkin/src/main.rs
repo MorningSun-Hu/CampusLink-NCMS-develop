@@ -57,6 +57,8 @@ struct CheckinApp {
     teacher_attempts: u32,
     tx: mpsc::Sender<Result<WorkerResult, String>>,
     rx: mpsc::Receiver<Result<WorkerResult, String>>,
+    ime_on: bool,
+    submitted: bool,
 }
 
 impl CheckinApp {
@@ -85,6 +87,8 @@ impl CheckinApp {
             teacher_attempts: 0,
             tx,
             rx,
+            ime_on: false,
+            submitted: false,
         }
     }
 
@@ -117,7 +121,7 @@ impl CheckinApp {
                 }
                 "teaching" => {
                     if student_no.trim().is_empty() || password.is_empty() {
-                        Err("请输入学号/姓名和密码".to_string())
+                        Err("请输入学号和密码".to_string())
                     } else {
                         match do_student_login(&server_url, &student_no, &password) {
                             Ok((student_id, password_set)) => {
@@ -176,7 +180,7 @@ impl CheckinApp {
     }
 
     fn start_submit(&mut self) {
-        if self.busy {
+        if self.busy || self.submitted {
             return;
         }
         let server_url = self.server_url.clone();
@@ -186,6 +190,7 @@ impl CheckinApp {
         let is_abnormal = self.is_abnormal || !self.inspect_error.is_empty();
         let tx = self.tx.clone();
         self.busy = true;
+        self.submitted = true;
         self.message = "正在提交签到...".to_string();
         std::thread::spawn(move || {
             let result = do_checkin(&server_url, &device_id, &student_id, &items, is_abnormal)
@@ -242,6 +247,7 @@ impl CheckinApp {
             }
             Err(e) => {
                 self.message = e;
+                self.submitted = false;
             }
         }
     }
@@ -378,7 +384,7 @@ impl eframe::App for CheckinApp {
                     ui.add_space(6.0);
                     let subtitle = match (self.stage, &self.mode) {
                         (Stage::Identity, Mode::Open) => "开放模式：请填写使用者姓名",
-                        (Stage::Identity, Mode::Teaching) => "授课模式：请使用学号或姓名登录",
+                        (Stage::Identity, Mode::Teaching) => "授课模式：请使用学号登录",
                         (Stage::ChangePassword, _) => "首次签到，请设置新密码",
                         (Stage::Inspect, _) => "环境与设备检查完成后，确认结果并进入桌面",
                     };
@@ -414,7 +420,10 @@ impl eframe::App for CheckinApp {
                 });
             });
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.busy {
+        let ime_commit = ctx.input(|i| {
+            i.events.iter().any(|e| matches!(e, egui::Event::Ime(egui::ImeEvent::Commit(_))))
+        });
+        if !ime_commit && ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.busy {
             match self.stage {
                 Stage::Identity => self.start_identity(),
                 Stage::ChangePassword => self.start_change_password(),
@@ -433,7 +442,7 @@ impl eframe::App for CheckinApp {
 
 impl CheckinApp {
     fn can_enter_desktop(&self) -> bool {
-        !self.busy && (!self.inspect_items.is_empty() || self.inspect_fail_count >= 2)
+        !self.busy && !self.submitted && (!self.inspect_items.is_empty() || self.inspect_fail_count >= 2)
     }
 
     fn ui_status_message(&self, ui: &mut egui::Ui, muted: egui::Color32, danger: egui::Color32, ok: egui::Color32) {
@@ -459,12 +468,16 @@ impl CheckinApp {
         }
         if self.show_teacher {
             ui.add_space(8.0);
-            ui.add_sized(
+            let teacher_resp = ui.add_sized(
                 [ui.available_width(), 32.0],
                 egui::TextEdit::singleline(&mut self.teacher_input)
                     .password(true)
                     .hint_text("教师超级密码"),
             );
+            if teacher_resp.has_focus() {
+                disable_ime();
+                self.ime_on = false;
+            }
             ui.add_space(8.0);
             if ui
                 .add_sized([ui.available_width(), 32.0], egui::Button::new("确认解锁"))
@@ -522,27 +535,38 @@ impl CheckinApp {
             Mode::Open => {
                 ui.label(egui::RichText::new("使用者姓名").color(accent));
                 ui.add_space(6.0);
-                ui.add_sized(
+                let name_resp = ui.add_sized(
                     [ui.available_width(), 36.0],
                     egui::TextEdit::singleline(&mut self.name_input).hint_text("请输入姓名"),
                 );
+                if name_resp.has_focus() && !self.ime_on {
+                    enable_chinese_ime();
+                    self.ime_on = true;
+                } else if !name_resp.has_focus() && self.ime_on {
+                    disable_ime();
+                    self.ime_on = false;
+                }
             }
             Mode::Teaching => {
-                ui.label(egui::RichText::new("学号或姓名").color(accent));
+                ui.label(egui::RichText::new("学号").color(accent));
                 ui.add_space(6.0);
-                ui.add_sized(
+                let no_resp = ui.add_sized(
                     [ui.available_width(), 36.0],
-                    egui::TextEdit::singleline(&mut self.student_no_input).hint_text("学号或姓名"),
+                    egui::TextEdit::singleline(&mut self.student_no_input).hint_text("请输入学号"),
                 );
                 ui.add_space(10.0);
                 ui.label(egui::RichText::new("密码").color(accent));
                 ui.add_space(6.0);
-                ui.add_sized(
+                let pwd_resp = ui.add_sized(
                     [ui.available_width(), 36.0],
                     egui::TextEdit::singleline(&mut self.password_input)
                         .password(true)
                         .hint_text("初始密码 123456"),
                 );
+                if no_resp.has_focus() || pwd_resp.has_focus() {
+                    disable_ime();
+                    self.ime_on = false;
+                }
             }
         }
         ui.add_space(16.0);
@@ -555,12 +579,16 @@ impl CheckinApp {
     fn ui_password(&mut self, ui: &mut egui::Ui, accent: egui::Color32) {
         ui.label(egui::RichText::new("新密码").color(accent));
         ui.add_space(6.0);
-        ui.add_sized(
+        let pwd_resp = ui.add_sized(
             [ui.available_width(), 36.0],
             egui::TextEdit::singleline(&mut self.new_password_input)
                 .password(true)
                 .hint_text("不少于 4 位"),
         );
+        if pwd_resp.has_focus() {
+            disable_ime();
+            self.ime_on = false;
+        }
         ui.add_space(16.0);
         let label = if self.busy { "处理中..." } else { "确认修改" };
         if ui.add_enabled(!self.busy, egui::Button::new(egui::RichText::new(label).size(16.0)).min_size(egui::vec2(ui.available_width(), 40.0))).clicked() {
@@ -618,6 +646,41 @@ impl CheckinApp {
     }
 }
 
+fn enable_chinese_ime() {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::core::w;
+        use windows::Win32::Foundation::BOOL;
+        use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext, ImmSetOpenStatus};
+        use windows::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, KLF_ACTIVATE};
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+        let _ = LoadKeyboardLayoutW(w!("00000804"), KLF_ACTIVATE);
+        let hwnd = GetForegroundWindow();
+        let himc = ImmGetContext(hwnd);
+        if !himc.0.is_null() {
+            let _ = ImmSetOpenStatus(himc, BOOL::from(true));
+            let _ = ImmReleaseContext(hwnd, himc);
+        }
+    }
+}
+
+fn disable_ime() {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::Foundation::BOOL;
+        use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext, ImmSetOpenStatus};
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+        let hwnd = GetForegroundWindow();
+        let himc = ImmGetContext(hwnd);
+        if !himc.0.is_null() {
+            let _ = ImmSetOpenStatus(himc, BOOL::from(false));
+            let _ = ImmReleaseContext(hwnd, himc);
+        }
+    }
+}
+
 fn setup_cjk_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let candidates = [
@@ -640,14 +703,6 @@ fn setup_cjk_fonts(ctx: &egui::Context) {
 }
 
 fn main() {
-    #[cfg(target_os = "windows")]
-    unsafe {
-        use windows::Win32::UI::Input::Ime::ImmDisableIME;
-        use windows::Win32::System::Threading::GetCurrentThreadId;
-        let thread_id = GetCurrentThreadId();
-        let _ = ImmDisableIME(thread_id);
-    }
-
     keyhook::start_keyboard_hook();
 
     let args: Vec<String> = std::env::args().collect();

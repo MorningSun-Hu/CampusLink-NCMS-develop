@@ -14,7 +14,7 @@ mod discovery;
 
 use anyhow::Result;
 use std::path::PathBuf;
-use tracing::{info, error, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::Config;
@@ -48,6 +48,13 @@ async fn main() -> Result<()> {
     let mut config = Config::load().unwrap_or_else(|_| Config::default());
     info!("Configuration loaded");
 
+    let normalized = mode::normalize_local_mode(&config.current_mode);
+    if normalized != config.current_mode {
+        info!("Normalizing stored mode {} -> {}", config.current_mode, normalized);
+        config.current_mode = normalized;
+        let _ = config.save();
+    }
+
     // Try UDP discovery if teacher_server_url is not configured (including
     // stale 0.0.0.0 saved from a previous buggy discovery response)
     let needs_discovery = config.teacher_server_url.is_empty()
@@ -80,8 +87,7 @@ async fn main() -> Result<()> {
         match collect_and_register(&mut config).await {
             Ok(_) => info!("Registration completed"),
             Err(e) => {
-                error!("Registration failed: {}", e);
-                return Err(e);
+                warn!("Registration failed: {}, will keep retrying", e);
             }
         }
     } else {
@@ -91,8 +97,6 @@ async fn main() -> Result<()> {
     if let Err(e) = hardware::submit(&config).await {
         warn!("Hardware snapshot submit failed: {}", e);
     }
-
-    attendance::start_admission_monitor(config.clone());
 
     let policies = process_guard::sync_policies(&config).await;
     let _alerts = process_guard::check_and_restart(&policies);

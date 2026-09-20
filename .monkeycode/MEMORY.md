@@ -64,6 +64,18 @@
   - 教师端 `teacher` 启动时 `set_current_dir(exe_dir)`，并自动创建 `data/` `logs/` `config/`，缺失时写入默认 `config/config.toml`。冒烟测试把 `teacher` 可执行文件、`static/` 放到同一临时目录即可
   - 冒烟测试用 SQLite 独立库文件（`sqlite:data/xxx.db`），每次换新库名即可获得干净数据，避免删除文件
   - 公开路由（无需 JWT）：`/api/auth/login`、`/api/auth/student-login`、`/api/auth/student-set-password`、`/api/devices/register`、`/api/attendance/check-in`、`/api/attendance/context`；班级/学生/设备等管理接口需 Bearer JWT
-  - 学生改密接口 `/api/auth/student-set-password` 请求体为 snake_case（`student_id`/`old_password`/`new_password`），已用 serde alias 兼容 camelCase；学生登录 `/api/auth/student-login` 的 `student_no` 可为学号或姓名，初始密码默认 `123456`
+  - 学生改密接口 `/api/auth/student-set-password` 请求体为 snake_case（`student_id`/`old_password`/`new_password`），已用 serde alias 兼容 camelCase；学生登录 `/api/auth/student-login` 仅按学号精确匹配，初始密码默认 `123456`
   - 签到 `requiresCheckin` 语义：`open`/`teaching` 为 true，`exam`/`locked` 为 false；授课模式下学生座位号必须与设备座位号一致
   - 设备重复注册（同 `device_code`）必须返回已存在记录的主键 id，不能返回新生成的 UUID，否则按设备 id 的后续操作（归班/座位/签到）会全部失效（已修复 + 回归测试 `re_register_same_device_code_keeps_stable_id`）
+
+[apply_patch 标记格式]
+- Date: 2026-09-19
+- Context: 用户要求定位 missing Begin/End markers 并记住，避免再犯
+- Category: Environment Configuration
+- Instructions:
+  - apply_patch 的 `patchText` 必须以整行 `*** Begin Patch` 开头、整行 `*** End Patch` 结尾
+  - 这两行必须精确匹配：行首无空格、行尾无多余 `***`、无引号、无代码围栏包裹
+  - 错误写法 `*** Begin Patch ***` / `*** End Patch ***` 会报 `Invalid patch format: missing Begin/End markers`
+  - 报错 `Failed to find context` 是定位上下文与文件内容对不上，和 Begin/End 标记无关；先读文件，用 `@@` 后跟文件中真实存在的一行来定位
+  - 不要写 unified diff 的行号头（例如 `@@ -64,6 +64,19 @@`），该工具会把这串当成要查找的上下文
+  - 新建文件用 `*** Add File: <path>`，后续每行内容必须以 `+` 开头

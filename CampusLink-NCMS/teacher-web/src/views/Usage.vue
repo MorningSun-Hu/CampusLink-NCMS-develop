@@ -60,7 +60,7 @@
       <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <el-button
-            v-if="!row.endTime"
+            v-if="!row.endTime && row.mode !== 'exam'"
             type="warning"
             size="small"
             :loading="endingId === row.id"

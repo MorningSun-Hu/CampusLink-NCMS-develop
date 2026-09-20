@@ -14,7 +14,6 @@ pub struct WebSocketClient {
     config: Config,
     ws_stream: Option<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>,
     reconnect_attempts: u32,
-    max_reconnect_attempts: u32,
 }
 
 impl WebSocketClient {
@@ -23,7 +22,6 @@ impl WebSocketClient {
             config,
             ws_stream: None,
             reconnect_attempts: 0,
-            max_reconnect_attempts: 5,
         }
     }
 
@@ -171,15 +169,16 @@ impl WebSocketClient {
 
     /// 检查是否需要重连
     pub fn should_reconnect(&self) -> bool {
-        self.ws_stream.is_none() && self.reconnect_attempts < self.max_reconnect_attempts
+        self.ws_stream.is_none()
     }
 
     /// 获取下次重连的等待时间（指数退避）
     pub fn get_reconnect_delay(&self) -> std::time::Duration {
         use std::time::Duration;
         
-        let base_delay = Duration::from_secs(1);
-        let delay = base_delay * (2u32.pow(self.reconnect_attempts as u32));
+        let exp = self.reconnect_attempts.min(5);
+        let secs = (1u64 << exp).min(30);
+        let delay = Duration::from_secs(secs);
         
         // 添加随机抖动（0-500ms）
         let jitter = Duration::from_millis(rand::random::<u64>() % 500);
@@ -189,8 +188,8 @@ impl WebSocketClient {
 
     /// 增加重连计数
     pub fn increment_reconnect_attempts(&mut self) {
-        self.reconnect_attempts += 1;
-        info!("Reconnect attempt {}/{}", self.reconnect_attempts, self.max_reconnect_attempts);
+        self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
+        info!("Reconnect attempt {}", self.reconnect_attempts);
     }
 }
 
@@ -202,6 +201,7 @@ pub struct HeartbeatLoop {
     config: Config,
     process_guard_interval: std::time::Duration,
     unlock_rx: mpsc::UnboundedReceiver<String>,
+    mode_synced: bool,
 }
 
 impl HeartbeatLoop {
@@ -217,6 +217,7 @@ impl HeartbeatLoop {
             config,
             process_guard_interval: std::time::Duration::from_secs(60),
             unlock_rx,
+            mode_synced: false,
         }
     }
 
@@ -224,11 +225,9 @@ impl HeartbeatLoop {
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting WebSocket heartbeat loop");
 
-        // 初始连接
-        if let Err(e) = self.client.connect().await {
-            error!("Initial WebSocket connection failed: {}", e);
-            return Err(e);
-        }
+        let local = crate::mode::normalize_local_mode(&self.config.current_mode);
+        self.apply_mode(&local).await;
+        self.connect_with_retry().await;
 
         let mut heartbeat_interval = tokio::time::interval(self.heartbeat_interval);
         let mut process_guard_tick = tokio::time::interval(self.process_guard_interval);
@@ -293,32 +292,126 @@ impl HeartbeatLoop {
                             self.config.lock_is_overlay = self.command_handler.config.lock_is_overlay;
                         }
                         Ok(None) => {
-                            if self.client.should_reconnect() {
-                                self.client.increment_reconnect_attempts();
-                                let delay = self.client.get_reconnect_delay();
-                                warn!("Connection lost, reconnecting in {:?}", delay);
-                                tokio::time::sleep(delay).await;
-                                
-                                if let Err(e) = self.client.connect().await {
-                                    error!("Reconnection failed: {}", e);
-                                }
-                            }
+                            warn!("Connection lost, reconnecting");
+                            self.connect_with_retry().await;
                         }
                         Err(e) => {
                             error!("Receive error: {}", e);
-                            if self.client.should_reconnect() {
-                                self.client.increment_reconnect_attempts();
-                                let delay = self.client.get_reconnect_delay();
-                                tokio::time::sleep(delay).await;
-                                
-                                if let Err(e) = self.client.connect().await {
-                                    error!("Reconnection failed: {}", e);
-                                }
-                            }
+                            self.connect_with_retry().await;
                         }
                     }
                 }
             }
         }
+    }
+
+    fn sync_config_from_handler(&mut self) {
+        self.config.current_mode = self.command_handler.config.current_mode.clone();
+        self.config.is_locked = self.command_handler.config.is_locked;
+        self.config.lock_pid = self.command_handler.config.lock_pid;
+        self.config.mode_before_lock = self.command_handler.config.mode_before_lock.clone();
+        self.config.lock_is_overlay = self.command_handler.config.lock_is_overlay;
+        self.config.device_id = self.command_handler.config.device_id.clone();
+        self.config.session_key = self.command_handler.config.session_key.clone();
+        self.config.teacher_fingerprint = self.command_handler.config.teacher_fingerprint.clone();
+    }
+
+    async fn apply_mode(&mut self, target: &str) {
+        let unlock_tx = self.command_handler.unlock_tx().clone();
+        if let Err(e) = crate::mode::handle_mode_switch(
+            &mut self.command_handler.config,
+            target,
+            &unlock_tx,
+        )
+        .await
+        {
+            warn!("Failed to apply mode {}: {}", target, e);
+        }
+        self.sync_config_from_handler();
+    }
+
+    async fn connect_with_retry(&mut self) {
+        loop {
+            if self.config.device_id.is_none() {
+                match crate::register::collect_and_register(&mut self.config).await {
+                    Ok(_) => {
+                        self.command_handler.config.device_id = self.config.device_id.clone();
+                        self.command_handler.config.session_key = self.config.session_key.clone();
+                        self.command_handler.config.teacher_fingerprint =
+                            self.config.teacher_fingerprint.clone();
+                        self.command_handler.config.heartbeat_interval_seconds =
+                            self.config.heartbeat_interval_seconds;
+                        self.client = WebSocketClient::new(self.config.clone());
+                        info!("Registration completed");
+                    }
+                    Err(e) => {
+                        self.client.increment_reconnect_attempts();
+                        let delay = self.client.get_reconnect_delay();
+                        warn!("Registration failed: {}, retry in {:?}", e, delay);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                }
+            }
+
+            match self.client.connect().await {
+                Ok(()) => {
+                    if !self.mode_synced {
+                        match self.sync_teacher_mode().await {
+                            Ok(()) => self.mode_synced = true,
+                            Err(e) => warn!("Teacher mode sync failed: {}", e),
+                        }
+                    }
+                    return;
+                }
+                Err(e) => {
+                    self.client.increment_reconnect_attempts();
+                    let delay = self.client.get_reconnect_delay();
+                    warn!("WebSocket connect failed: {}, retry in {:?}", e, delay);
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+
+    async fn sync_teacher_mode(&mut self) -> Result<()> {
+        let device_id = self
+            .config
+            .device_id
+            .as_deref()
+            .context("Device not registered")?;
+        let teacher_mode =
+            crate::register::fetch_teacher_mode(&self.config.teacher_server_url, device_id).await?;
+        let next = crate::mode::resolve_synced_mode(&self.config.current_mode, &teacher_mode);
+        if next != self.config.current_mode {
+            info!(
+                "Syncing mode {} -> {} (teacher={})",
+                self.config.current_mode, next, teacher_mode
+            );
+            self.apply_mode(&next).await;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn should_reconnect_has_no_attempt_cap() {
+        let mut client = WebSocketClient::new(Config::default());
+        client.reconnect_attempts = 100;
+        assert!(client.should_reconnect());
+    }
+
+    #[test]
+    fn reconnect_delay_is_capped_near_30s() {
+        let mut client = WebSocketClient::new(Config::default());
+        client.reconnect_attempts = 40;
+        let delay = client.get_reconnect_delay();
+        assert!(delay <= Duration::from_secs(30) + Duration::from_millis(499));
+        assert!(delay >= Duration::from_secs(30));
     }
 }

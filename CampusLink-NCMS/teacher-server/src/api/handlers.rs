@@ -12,6 +12,7 @@ use tracing::{info, warn, error};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
 use crate::domain::device;
+use crate::domain::usage;
 use crate::crypto_util;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -444,6 +445,9 @@ async fn process_heartbeat_json(pool: &SqlitePool, text: &str) -> Option<String>
             if let Some(mode) = data["mode"].as_str() {
                 if matches!(mode, "open" | "teaching" | "exam" | "locked") {
                     let _ = device::update_device_mode(pool, device_id, mode).await;
+                }
+                if mode == "exam" {
+                    let _ = usage::ensure_exam_session(pool, device_id).await;
                 }
             }
             return Some(device_id.to_string());

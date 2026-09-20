@@ -126,7 +126,12 @@ pub async fn register_device(pool: &SqlitePool, device_code: &str, machine_finge
     let teacher_fingerprint = crate::infrastructure::device_repository::get_config_value_string(pool, "teacher_fingerprint").await?.unwrap_or_else(|| "pending_init".to_string());
     let heartbeat_interval = crate::infrastructure::device_repository::get_config_value_u32(pool, "heartbeat_interval_seconds").await?.unwrap_or(15);
 
-    Ok((device_id, teacher_fingerprint, "open".to_string(), heartbeat_interval))
+    let current_mode: String = sqlx::query_scalar("SELECT current_mode FROM student_devices WHERE id = ?")
+        .bind(&device_id)
+        .fetch_one(pool)
+        .await?;
+
+    Ok((device_id, teacher_fingerprint, current_mode, heartbeat_interval))
 }
 
 pub async fn list_devices(pool: &SqlitePool) -> Result<Vec<DeviceResponse>> {
@@ -297,13 +302,17 @@ pub fn sanitize_restore_mode(mode: &str) -> String {
 }
 
 pub async fn unlock_restore_mode(pool: &SqlitePool, device_id: &str) -> Result<String> {
-    let before: Option<String> = sqlx::query_scalar(
-        "SELECT mode_before_lock FROM student_devices WHERE id = ?"
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT current_mode, mode_before_lock FROM student_devices WHERE id = ?"
     )
     .bind(device_id)
     .fetch_optional(pool)
     .await?;
-    let restore = sanitize_restore_mode(before.as_deref().unwrap_or("open"));
+    let (current, before) = row.unwrap_or_else(|| ("open".to_string(), "open".to_string()));
+    if current != "locked" {
+        return Ok(sanitize_restore_mode(&current));
+    }
+    let restore = sanitize_restore_mode(&before);
     update_device_mode(pool, device_id, &restore).await?;
     Ok(restore)
 }
@@ -363,6 +372,10 @@ pub async fn switch_device_mode(
     .bind(device_id)
     .execute(pool)
     .await?;
+
+    if effective_mode == "exam" {
+        let _ = crate::domain::usage::ensure_exam_session(pool, device_id).await;
+    }
 
     let content = if effective_mode == target_mode {
         format!("Switched to {}", effective_mode)
@@ -543,6 +556,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn re_register_returns_persisted_current_mode() {
+        let pool = setup_pool().await;
+        let (device_id, _, _, _) = register_device(
+            &pool,
+            "DEV-REG-MODE",
+            "fp-reg-mode",
+            "host-reg-mode",
+            "192.168.1.31",
+            "aa:bb:cc",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+
+        sqlx::query("UPDATE student_devices SET current_mode = 'teaching' WHERE id = ?")
+            .bind(&device_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let (_, _, initial_mode, _) = register_device(
+            &pool,
+            "DEV-REG-MODE",
+            "fp-reg-mode-2",
+            "host-reg-mode",
+            "192.168.1.32",
+            "aa:bb:cc",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(initial_mode, "teaching");
+    }
+
+    #[tokio::test]
     async fn whitelist_default_policy_allows_all() {
         let pool = setup_pool().await;
         assert!(check_whitelist(&pool, "ANY-DEVICE").await.unwrap());
@@ -570,5 +619,52 @@ mod tests {
         approve_whitelist(&pool, &id).await.unwrap();
 
         assert!(check_whitelist(&pool, "NOT-APPROVED").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn unlock_keeps_current_mode_when_not_locked() {
+        let pool = setup_pool().await;
+        let (device_id, _, _, _) = register_device(
+            &pool,
+            "DEV-UNLOCK-KEEP",
+            "fp-unlock-keep",
+            "host-unlock-keep",
+            "192.168.1.40",
+            "aa:bb:cc",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+        update_device_mode(&pool, &device_id, "teaching").await.unwrap();
+
+        let restore = unlock_restore_mode(&pool, &device_id).await.unwrap();
+        assert_eq!(restore, "teaching");
+        let mode: String = sqlx::query_scalar("SELECT current_mode FROM student_devices WHERE id = ?")
+            .bind(&device_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(mode, "teaching");
+    }
+
+    #[tokio::test]
+    async fn unlock_restores_mode_before_lock() {
+        let pool = setup_pool().await;
+        let (device_id, _, _, _) = register_device(
+            &pool,
+            "DEV-UNLOCK-LOCK",
+            "fp-unlock-lock",
+            "host-unlock-lock",
+            "192.168.1.41",
+            "aa:bb:cc",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+        update_device_mode(&pool, &device_id, "teaching").await.unwrap();
+        remember_mode_and_lock(&pool, &device_id).await.unwrap();
+
+        let restore = unlock_restore_mode(&pool, &device_id).await.unwrap();
+        assert_eq!(restore, "teaching");
     }
 }

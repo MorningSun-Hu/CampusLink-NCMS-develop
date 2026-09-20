@@ -4,6 +4,7 @@ use serde::Deserialize;
 use tracing::error;
 
 use super::handlers::{ApiResponse, AppState};
+use super::handlers::{dispatch_checkin_trigger, requires_checkin};
 use crate::domain::usage::{self, UsageQuery, UsageRecord};
 
 pub async fn list_usage_handler(
@@ -24,7 +25,10 @@ pub async fn end_usage_handler(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match usage::end_session(&state.pool, &id).await {
-        Ok(record) => Json(ApiResponse::success(record)),
+        Ok(record) => {
+            trigger_checkin_if_needed(&state, &record.device_id).await;
+            Json(ApiResponse::success(record))
+        }
         Err(e) => {
             error!("End usage session failed: {}", e);
             Json(ApiResponse::error(400, e.to_string()))
@@ -58,6 +62,8 @@ pub async fn close_usage_handler(
                 .bind(&req.device_id)
                 .execute(&state.pool)
                 .await;
+            } else {
+                trigger_checkin_if_needed(&state, &req.device_id).await;
             }
             Json(ApiResponse::success(serde_json::json!({
                 "closed": closed_id.is_some(),
@@ -68,6 +74,19 @@ pub async fn close_usage_handler(
             error!("Close usage session failed: {}", e);
             Json(ApiResponse::error(500, "结束使用会话失败".to_string()))
         }
+    }
+}
+
+async fn trigger_checkin_if_needed(state: &AppState, device_id: &str) {
+    let mode: String = sqlx::query_scalar("SELECT current_mode FROM student_devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if requires_checkin(&mode) {
+        dispatch_checkin_trigger(state, &[device_id.to_string()]).await;
     }
 }
 

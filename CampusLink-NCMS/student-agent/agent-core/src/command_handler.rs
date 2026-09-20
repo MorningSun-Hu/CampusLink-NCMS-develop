@@ -74,6 +74,10 @@ impl CommandHandler {
         Self { config, unlock_tx }
     }
 
+    pub fn unlock_tx(&self) -> &Option<mpsc::UnboundedSender<String>> {
+        &self.unlock_tx
+    }
+
     /// 处理 WebSocket 命令
     pub async fn handle_command(&mut self, message: &str) -> Result<()> {
         info!("Processing command: {}", message);
