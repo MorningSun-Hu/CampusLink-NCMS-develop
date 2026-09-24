@@ -2,7 +2,7 @@
 mod keyhook_impl {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
-    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VK_APPS,
@@ -13,8 +13,8 @@ mod keyhook_impl {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW,
-        EnumWindows, GetClassNameW, SetWindowPos, TranslateMessage, UnhookWindowsHookEx,
-        HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        TranslateMessage, UnhookWindowsHookEx,
+        KBDLLHOOKSTRUCT, MSG,
         WH_KEYBOARD_LL,
         WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
@@ -53,6 +53,10 @@ mod keyhook_impl {
 
     fn should_block(vk: u32, flags: u32) -> bool {
         if vk == VK_SHIFT.0 as u32 || vk == VK_LSHIFT.0 as u32 || vk == VK_RSHIFT.0 as u32 {
+            return false;
+        }
+        // IME composition keys must pass through so candidate UI can work.
+        if vk == 0xE5 || vk == 0xE7 {
             return false;
         }
         if vk == VK_LWIN.0 as u32 || vk == VK_RWIN.0 as u32 || vk == VK_APPS.0 as u32 {
@@ -166,45 +170,6 @@ mod keyhook_impl {
         }
     }
 
-    fn is_ime_class(name: &str) -> bool {
-        let upper = name.to_ascii_uppercase();
-        upper.contains("IME")
-            || upper.contains("CICERO")
-            || upper.contains("CANDIDATE")
-            || upper.contains("TSF")
-    }
-
-    unsafe extern "system" fn raise_ime_enum(hwnd: HWND, _lparam: LPARAM) -> BOOL {
-        let mut buf = [0u16; 256];
-        let len = GetClassNameW(hwnd, &mut buf);
-        if len > 0 {
-            let class = String::from_utf16_lossy(&buf[..len as usize]);
-            if is_ime_class(&class) {
-                let _ = SetWindowPos(
-                    hwnd,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                );
-            }
-        }
-        BOOL(1)
-    }
-
-    fn start_ime_raiser() {
-        std::thread::spawn(|| {
-            while GUARDS_ON.load(Ordering::SeqCst) {
-                unsafe {
-                    let _ = EnumWindows(Some(raise_ime_enum), LPARAM(0));
-                }
-                std::thread::sleep(Duration::from_millis(80));
-            }
-        });
-    }
-
     fn silent_taskkill(image: &str) {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -231,7 +196,6 @@ mod keyhook_impl {
         }
         GUARDS_ON.store(true, Ordering::SeqCst);
         start_taskmgr_guard();
-        start_ime_raiser();
         std::thread::spawn(|| {
             unsafe {
                 let module = GetModuleHandleW(None).unwrap_or_default();

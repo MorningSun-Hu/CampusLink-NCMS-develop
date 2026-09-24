@@ -32,7 +32,7 @@
         <template #default="{ row }">{{ row.deviceName || row.deviceId }}</template>
       </el-table-column>
       <el-table-column prop="userName" label="使用人" width="120">
-        <template #default="{ row }">{{ row.userName || row.studentName || '-' }}</template>
+        <template #default="{ row }">{{ row.studentName || row.userName || '-' }}</template>
       </el-table-column>
       <el-table-column prop="className" label="班级" width="140">
         <template #default="{ row }">{{ row.className || '-' }}</template>

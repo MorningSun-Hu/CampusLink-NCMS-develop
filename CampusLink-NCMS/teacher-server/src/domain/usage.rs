@@ -57,8 +57,14 @@ impl From<UsageJoinedRow> for UsageRecord {
             seat_no: row.seat_no,
             student_id: row.student_id,
             student_no: row.student_no,
-            student_name: row.student_name,
-            user_name: row.user_name,
+            student_name: row.student_name.clone(),
+            user_name: row
+                .student_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or(row.user_name),
             mode: row.mode,
             start_time: to_rfc3339(&row.start_time),
             end_time: to_rfc3339_opt(row.end_time.as_deref()),

@@ -57,7 +57,7 @@ struct CheckinApp {
     teacher_attempts: u32,
     tx: mpsc::Sender<Result<WorkerResult, String>>,
     rx: mpsc::Receiver<Result<WorkerResult, String>>,
-    ime_on: bool,
+    ime_initialized: bool,
     submitted: bool,
 }
 
@@ -87,7 +87,7 @@ impl CheckinApp {
             teacher_attempts: 0,
             tx,
             rx,
-            ime_on: false,
+            ime_initialized: false,
             submitted: false,
         }
     }
@@ -364,6 +364,14 @@ impl eframe::App for CheckinApp {
             self.apply_worker(result);
         }
 
+        if !self.ime_initialized {
+            match self.mode {
+                Mode::Open => enable_chinese_ime(),
+                Mode::Teaching => disable_ime(),
+            }
+            self.ime_initialized = true;
+        }
+
         let bg = egui::Color32::from_rgb(18, 22, 32);
         let card = egui::Color32::from_rgb(28, 34, 48);
         let accent = egui::Color32::from_rgb(70, 140, 230);
@@ -468,16 +476,12 @@ impl CheckinApp {
         }
         if self.show_teacher {
             ui.add_space(8.0);
-            let teacher_resp = ui.add_sized(
+            ui.add_sized(
                 [ui.available_width(), 32.0],
                 egui::TextEdit::singleline(&mut self.teacher_input)
                     .password(true)
                     .hint_text("教师超级密码"),
             );
-            if teacher_resp.has_focus() {
-                disable_ime();
-                self.ime_on = false;
-            }
             ui.add_space(8.0);
             if ui
                 .add_sized([ui.available_width(), 32.0], egui::Button::new("确认解锁"))
@@ -535,38 +539,27 @@ impl CheckinApp {
             Mode::Open => {
                 ui.label(egui::RichText::new("使用者姓名").color(accent));
                 ui.add_space(6.0);
-                let name_resp = ui.add_sized(
+                ui.add_sized(
                     [ui.available_width(), 36.0],
                     egui::TextEdit::singleline(&mut self.name_input).hint_text("请输入姓名"),
                 );
-                if name_resp.has_focus() && !self.ime_on {
-                    enable_chinese_ime();
-                    self.ime_on = true;
-                } else if !name_resp.has_focus() && self.ime_on {
-                    disable_ime();
-                    self.ime_on = false;
-                }
             }
             Mode::Teaching => {
                 ui.label(egui::RichText::new("学号").color(accent));
                 ui.add_space(6.0);
-                let no_resp = ui.add_sized(
+                ui.add_sized(
                     [ui.available_width(), 36.0],
                     egui::TextEdit::singleline(&mut self.student_no_input).hint_text("请输入学号"),
                 );
                 ui.add_space(10.0);
                 ui.label(egui::RichText::new("密码").color(accent));
                 ui.add_space(6.0);
-                let pwd_resp = ui.add_sized(
+                ui.add_sized(
                     [ui.available_width(), 36.0],
                     egui::TextEdit::singleline(&mut self.password_input)
                         .password(true)
                         .hint_text("初始密码 123456"),
                 );
-                if no_resp.has_focus() || pwd_resp.has_focus() {
-                    disable_ime();
-                    self.ime_on = false;
-                }
             }
         }
         ui.add_space(16.0);
@@ -579,16 +572,12 @@ impl CheckinApp {
     fn ui_password(&mut self, ui: &mut egui::Ui, accent: egui::Color32) {
         ui.label(egui::RichText::new("新密码").color(accent));
         ui.add_space(6.0);
-        let pwd_resp = ui.add_sized(
+        ui.add_sized(
             [ui.available_width(), 36.0],
             egui::TextEdit::singleline(&mut self.new_password_input)
                 .password(true)
                 .hint_text("不少于 4 位"),
         );
-        if pwd_resp.has_focus() {
-            disable_ime();
-            self.ime_on = false;
-        }
         ui.add_space(16.0);
         let label = if self.busy { "处理中..." } else { "确认修改" };
         if ui.add_enabled(!self.busy, egui::Button::new(egui::RichText::new(label).size(16.0)).min_size(egui::vec2(ui.available_width(), 40.0))).clicked() {
@@ -723,9 +712,8 @@ fn main() {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_fullscreen(true)
+            .with_maximized(true)
             .with_decorations(false)
-            .with_always_on_top()
             .with_close_button(false)
             .with_mouse_passthrough(false),
         ..Default::default()

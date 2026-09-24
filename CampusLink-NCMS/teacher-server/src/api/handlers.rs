@@ -442,13 +442,16 @@ async fn process_heartbeat_json(pool: &SqlitePool, text: &str) -> Option<String>
     if let Ok(data) = serde_json::from_str::<serde_json::Value>(text) {
         if let Some(device_id) = data["device_id"].as_str() {
             let _ = device::update_heartbeat(pool, device_id).await;
-            if let Some(mode) = data["mode"].as_str() {
-                if matches!(mode, "open" | "teaching" | "exam" | "locked") {
-                    let _ = device::update_device_mode(pool, device_id, mode).await;
-                }
-                if mode == "exam" {
-                    let _ = usage::ensure_exam_session(pool, device_id).await;
-                }
+            let db_mode: Option<String> = sqlx::query_scalar(
+                "SELECT current_mode FROM student_devices WHERE id = ?"
+            )
+            .bind(device_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+            if db_mode.as_deref() == Some("exam") {
+                let _ = usage::ensure_exam_session(pool, device_id).await;
             }
             return Some(device_id.to_string());
         }

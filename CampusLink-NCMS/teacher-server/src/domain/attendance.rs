@@ -369,11 +369,24 @@ pub async fn check_in(
     }
 
     // 开放模式（以及其他非授课模式）：仅生成使用记录，不计入考勤
-    let user_name = student_id
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or("未知用户")
-        .to_string();
+    let mut usage_student_id: Option<String> = None;
+    let user_name = if let Some(sid) = student_id.map(str::trim).filter(|v| !v.is_empty()) {
+        let found: Option<(String, String)> = sqlx::query_as(
+            "SELECT id, name FROM students WHERE id = ?"
+        )
+        .bind(sid)
+        .fetch_optional(pool)
+        .await?;
+        if let Some((pk, name)) = found {
+            let display = name.trim().to_string();
+            usage_student_id = Some(pk);
+            if display.is_empty() { sid.to_string() } else { display }
+        } else {
+            sid.to_string()
+        }
+    } else {
+        "未知用户".to_string()
+    };
 
     let usage_record_id = usage::reuse_or_start_session(
         pool,
@@ -381,7 +394,7 @@ pub async fn check_in(
             device_id,
             class_id: device_class_id.as_deref(),
             seat_no: device_seat.as_deref(),
-            student_id: None,
+            student_id: usage_student_id.as_deref(),
             user_name: &user_name,
             mode: &mode,
             inspection_ok,
@@ -673,6 +686,37 @@ mod tests {
         assert_eq!(records[0].student_id.as_deref(), Some(student_id.as_str()));
         assert_eq!(records[0].status, "present");
         assert_eq!(records[0].seat_no.as_deref(), Some("5"));
+    }
+
+    #[tokio::test]
+    async fn teaching_usage_record_uses_student_name() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-NAME-001").await;
+        let student_id = create_test_student(&pool, "STU-NAME-1").await;
+        make_teaching(&pool, &device_id, &student_id, "8").await;
+
+        check_in(&pool, &device_id, Some(&student_id), None, None).await.unwrap();
+
+        let usage = usage::list_usage(&pool, &usage::UsageQuery::default()).await.unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].user_name, "学生STU-NAME-1");
+        assert_eq!(usage[0].student_id.as_deref(), Some(student_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn open_mode_student_pk_still_stores_student_name() {
+        let pool = setup_pool().await;
+        let device_id = register_test_device(&pool, "DEV-NAME-002").await;
+        let student_id = create_test_student(&pool, "STU-NAME-2").await;
+
+        check_in(&pool, &device_id, Some(&student_id), None, None).await.unwrap();
+
+        let usage = usage::list_usage(&pool, &usage::UsageQuery::default()).await.unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].user_name, "学生STU-NAME-2");
+        assert_eq!(usage[0].student_id.as_deref(), Some(student_id.as_str()));
+        let attendance = list_attendance(&pool, &AttendanceQuery::default()).await.unwrap();
+        assert!(attendance.is_empty());
     }
 
     #[tokio::test]

@@ -16,7 +16,9 @@ pub struct InspectionItemRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct CheckInRequest {
+    #[serde(alias = "deviceId")]
     pub device_id: String,
+    #[serde(alias = "studentId")]
     pub student_id: Option<String>,
     pub timestamp: Option<u64>,
     #[serde(default)]
