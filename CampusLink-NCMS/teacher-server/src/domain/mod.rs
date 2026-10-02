@@ -9,6 +9,7 @@ pub mod student;
 pub mod class;
 pub mod usage;
 pub mod auth;
+pub mod user;
 pub mod time_util;
 pub mod repair;
 pub mod network_account;

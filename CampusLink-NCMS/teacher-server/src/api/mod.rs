@@ -14,6 +14,7 @@ mod repair_handlers;
 mod network_account_handlers;
 mod class_handlers;
 mod usage_handlers;
+mod user_handlers;
 
 use axum::{routing::{get, post, delete, put}, Router, middleware};
 use axum::response::Html;
@@ -43,7 +44,11 @@ use class_handlers::{
 use whitelist_handlers::{list_whitelist_handler, import_whitelist_handler, approve_whitelist_handler, delete_whitelist_handler};
 use repair_handlers::{create_repair_handler, list_repairs_handler, update_repair_handler, delete_repair_handler};
 use network_account_handlers::{list_accounts_handler, create_account_handler, update_account_handler, delete_account_handler};
-use crate::middleware::auth::auth_middleware;
+use user_handlers::{
+    list_users_handler, create_user_handler, update_user_handler, delete_user_handler,
+    reset_user_password_handler, change_own_password_handler,
+};
+use crate::middleware::auth::{auth_middleware, admin_middleware};
 
 pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
     let (ws_tx, _) = broadcast::channel(100);
@@ -176,11 +181,23 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/network-accounts", post(create_account_handler))
         .route("/api/network-accounts/:id", put(update_account_handler))
         .route("/api/network-accounts/:id", delete(delete_account_handler))
+        .route("/api/auth/change-password", post(change_own_password_handler))
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+
+    // Admin-only routes: authenticated first, then role checked
+    let admin_routes = Router::new()
+        .route("/api/users", get(list_users_handler))
+        .route("/api/users", post(create_user_handler))
+        .route("/api/users/:id", put(update_user_handler))
+        .route("/api/users/:id", delete(delete_user_handler))
+        .route("/api/users/:id/reset-password", post(reset_user_password_handler))
+        .layer(middleware::from_fn(admin_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     let app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .merge(admin_routes)
         .nest_service("/assets", ServeDir::new("static/assets"))
         .fallback(serve_spa_index)
         .with_state(state);

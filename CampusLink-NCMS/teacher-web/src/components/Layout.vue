@@ -74,13 +74,21 @@
               <span>网络认证</span>
             </div>
           </router-link>
+          <router-link v-if="isAdmin" to="/users" custom v-slot="{ navigate, isActive }">
+            <div class="menu-item" :class="{ active: isActive }" @click="navigate">
+              <span>用户管理</span>
+            </div>
+          </router-link>
         </div>
       </el-aside>
       <el-container>
         <el-header>
           <div class="header-content">
             <span class="system-name">网络教室管理系统</span>
-            <span class="user-info">管理员</span>
+            <div class="user-area">
+              <span class="user-info">{{ currentDisplayName }}</span>
+              <el-button link type="primary" @click="passwordVisible = true">修改密码</el-button>
+            </div>
           </div>
         </el-header>
         <el-main>
@@ -88,14 +96,81 @@
         </el-main>
       </el-container>
     </el-container>
+
+    <el-dialog v-model="passwordVisible" title="修改密码" width="420px">
+      <el-form ref="passwordRef" :model="passwordForm" :rules="passwordRules" label-width="90px">
+        <el-form-item label="当前密码" prop="oldPassword">
+          <el-input v-model="passwordForm.oldPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="新密码" prop="newPassword">
+          <el-input v-model="passwordForm.newPassword" type="password" show-password placeholder="不少于 4 位" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="passwordVisible = false">取消</el-button>
+        <el-button type="primary" :loading="passwordSaving" @click="handleChangePassword">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { changeOwnPassword } from '@/api/users'
 
 const { connect } = useWebSocket()
+
+const currentUser = (() => {
+  try {
+    const raw = localStorage.getItem('user')
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+})()
+
+const isAdmin = computed(() => currentUser.role === 'admin')
+const currentDisplayName = computed(() => currentUser.displayName || currentUser.username || '用户')
+
+const passwordVisible = ref(false)
+const passwordSaving = ref(false)
+const passwordRef = ref()
+const passwordForm = reactive({
+  oldPassword: '',
+  newPassword: '',
+})
+const passwordRules = {
+  oldPassword: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 4, message: '新密码不少于 4 位', trigger: 'blur' },
+  ],
+}
+
+async function handleChangePassword() {
+  const valid = await passwordRef.value?.validate().catch(() => false)
+  if (!valid) return
+
+  passwordSaving.value = true
+  try {
+    const result = await changeOwnPassword(passwordForm.oldPassword, passwordForm.newPassword)
+    if (result.code !== 0) {
+      ElMessage.error(result.message || '修改失败')
+      return
+    }
+    ElMessage.success('密码已修改')
+    passwordVisible.value = false
+    passwordForm.oldPassword = ''
+    passwordForm.newPassword = ''
+  } catch (error) {
+    const data = (error as { response?: { data?: { message?: string } } })?.response?.data
+    ElMessage.error(data?.message || '修改失败')
+  } finally {
+    passwordSaving.value = false
+  }
+}
 
 onMounted(() => {
   connect()
@@ -178,6 +253,12 @@ onMounted(() => {
 
 .user-info {
   color: #666;
+}
+
+.user-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .el-main {

@@ -83,9 +83,39 @@ const router = createRouter({
           name: 'NetworkAccounts',
           component: () => import('@/views/NetworkAccounts.vue'),
         },
+        {
+          path: 'users',
+          name: 'Users',
+          component: () => import('@/views/Users.vue'),
+          meta: { requiresAdmin: true },
+        },
       ],
     },
   ],
+})
+
+router.beforeEach((to) => {
+  const isLoginPage = to.path === '/login'
+  const token = localStorage.getItem('token')
+  if (!token && !isLoginPage) {
+    return '/login'
+  }
+  if (token && isLoginPage) {
+    return '/dashboard'
+  }
+  if (to.meta.requiresAdmin) {
+    let role = ''
+    try {
+      const raw = localStorage.getItem('user')
+      role = raw ? JSON.parse(raw).role : ''
+    } catch {
+      role = ''
+    }
+    if (role !== 'admin') {
+      return '/dashboard'
+    }
+  }
+  return true
 })
 
 export default router

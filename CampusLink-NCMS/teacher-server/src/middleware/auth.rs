@@ -45,3 +45,21 @@ pub async fn auth_middleware(
         }
     }
 }
+
+pub async fn admin_middleware(request: Request, next: Next) -> Response {
+    let is_admin = request
+        .extensions()
+        .get::<auth::Claims>()
+        .map(|claims| claims.role == "admin")
+        .unwrap_or(false);
+
+    if is_admin {
+        next.run(request).await
+    } else {
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({"code": 403, "message": "无权限执行该操作", "data": null})),
+        )
+            .into_response()
+    }
+}
