@@ -2,6 +2,7 @@
 
 mod inspect;
 mod keyhook;
+mod overlay;
 
 use eframe::egui;
 use inspect::{InspectionItem, InspectionReport};
@@ -59,6 +60,7 @@ struct CheckinApp {
     rx: mpsc::Receiver<Result<WorkerResult, String>>,
     ime_initialized: bool,
     submitted: bool,
+    name_focused: bool,
 }
 
 impl CheckinApp {
@@ -89,6 +91,7 @@ impl CheckinApp {
             rx,
             ime_initialized: false,
             submitted: false,
+            name_focused: false,
         }
     }
 
@@ -366,10 +369,12 @@ impl eframe::App for CheckinApp {
 
         if !self.ime_initialized {
             match self.mode {
-                Mode::Open => enable_chinese_ime(),
-                Mode::Teaching => disable_ime(),
+                Mode::Open => {}
+                Mode::Teaching => {
+                    disable_ime();
+                    self.ime_initialized = true;
+                }
             }
-            self.ime_initialized = true;
         }
 
         let bg = egui::Color32::from_rgb(18, 22, 32);
@@ -539,10 +544,19 @@ impl CheckinApp {
             Mode::Open => {
                 ui.label(egui::RichText::new("使用者姓名").color(accent));
                 ui.add_space(6.0);
-                ui.add_sized(
+                let name_resp = ui.add_sized(
                     [ui.available_width(), 36.0],
                     egui::TextEdit::singleline(&mut self.name_input).hint_text("请输入姓名"),
                 );
+                if !self.name_focused {
+                    name_resp.request_focus();
+                    self.name_focused = true;
+                }
+                if name_resp.has_focus() && !self.ime_initialized {
+                    if enable_chinese_ime() {
+                        self.ime_initialized = true;
+                    }
+                }
             }
             Mode::Teaching => {
                 ui.label(egui::RichText::new("学号").color(accent));
@@ -635,22 +649,37 @@ impl CheckinApp {
     }
 }
 
-fn enable_chinese_ime() {
+fn enable_chinese_ime() -> bool {
     #[cfg(target_os = "windows")]
-    unsafe {
-        use windows::core::w;
+    {
+        use windows::core::{HSTRING, w};
         use windows::Win32::Foundation::BOOL;
-        use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext, ImmSetOpenStatus};
+        use windows::Win32::UI::Input::Ime::{
+            ImmAssociateContextEx, ImmGetContext, ImmReleaseContext, ImmSetOpenStatus, HIMC,
+            IACE_CHILDREN, IACE_DEFAULT,
+        };
         use windows::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, KLF_ACTIVATE};
-        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
-        let _ = LoadKeyboardLayoutW(w!("00000804"), KLF_ACTIVATE);
-        let hwnd = GetForegroundWindow();
-        let himc = ImmGetContext(hwnd);
-        if !himc.0.is_null() {
-            let _ = ImmSetOpenStatus(himc, BOOL::from(true));
-            let _ = ImmReleaseContext(hwnd, himc);
+        unsafe {
+            let title = HSTRING::from(overlay::CHECKIN_WINDOW_TITLE);
+            let hwnd = FindWindowW(None, &title).unwrap_or_default();
+            if hwnd.is_invalid() {
+                return false;
+            }
+            let _ = ImmAssociateContextEx(hwnd, HIMC(std::ptr::null_mut()), IACE_DEFAULT | IACE_CHILDREN);
+            let _ = LoadKeyboardLayoutW(w!("00000804"), KLF_ACTIVATE);
+            let himc = ImmGetContext(hwnd);
+            if !himc.0.is_null() {
+                let _ = ImmSetOpenStatus(himc, BOOL::from(true));
+                let _ = ImmReleaseContext(hwnd, himc);
+            }
+            true
         }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        true
     }
 }
 
@@ -659,9 +688,14 @@ fn disable_ime() {
     unsafe {
         use windows::Win32::Foundation::BOOL;
         use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext, ImmSetOpenStatus};
-        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        use windows::core::HSTRING;
+        use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
-        let hwnd = GetForegroundWindow();
+        let title = HSTRING::from(overlay::CHECKIN_WINDOW_TITLE);
+        let hwnd = FindWindowW(None, &title).unwrap_or_default();
+        if hwnd.is_invalid() {
+            return;
+        }
         let himc = ImmGetContext(hwnd);
         if !himc.0.is_null() {
             let _ = ImmSetOpenStatus(himc, BOOL::from(false));
@@ -692,8 +726,6 @@ fn setup_cjk_fonts(ctx: &egui::Context) {
 }
 
 fn main() {
-    keyhook::start_keyboard_hook();
-
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
         let msg = "Usage: campus-checkin <server_url> <device_id> <mode> [lock_password]";
@@ -709,13 +741,36 @@ fn main() {
         "teaching" => Mode::Teaching,
         _ => Mode::Open,
     };
+    let policy = overlay::checkin_window_policy(matches!(mode, Mode::Teaching));
+
+    #[cfg(target_os = "windows")]
+    if !policy.allow_ime {
+        unsafe {
+            use windows::Win32::System::Threading::GetCurrentThreadId;
+            use windows::Win32::UI::Input::Ime::ImmDisableIME;
+            let _ = ImmDisableIME(GetCurrentThreadId());
+        }
+    }
+    keyhook::start_keyboard_hook(policy.allow_ime);
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_maximized(true)
-            .with_decorations(false)
-            .with_close_button(false)
-            .with_mouse_passthrough(false),
+        viewport: {
+            let mut viewport = egui::ViewportBuilder::default()
+                .with_title(overlay::CHECKIN_WINDOW_TITLE)
+                .with_decorations(false)
+                .with_close_button(false)
+                .with_mouse_passthrough(false);
+            if policy.fullscreen {
+                viewport = viewport.with_fullscreen(true);
+            }
+            if policy.maximized {
+                viewport = viewport.with_maximized(true);
+            }
+            if policy.always_on_top {
+                viewport = viewport.with_always_on_top();
+            }
+            viewport
+        },
         ..Default::default()
     };
 
@@ -723,7 +778,7 @@ fn main() {
     let close_device = device_id.clone();
     let app = CheckinApp::new(mode, server_url, device_id, lock_password);
     let _ = eframe::run_native(
-        "CampusCheckin",
+        overlay::CHECKIN_WINDOW_TITLE,
         options,
         Box::new(|cc| {
             setup_cjk_fonts(&cc.egui_ctx);
