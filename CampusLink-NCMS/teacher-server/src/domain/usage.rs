@@ -5,6 +5,9 @@ use uuid::Uuid;
 
 use crate::domain::time_util::{to_rfc3339, to_rfc3339_opt};
 
+pub const DEFAULT_USAGE_SESSION_TIMEOUT_SECONDS: u32 = 60;
+pub const USAGE_SESSION_TIMEOUT_CONFIG_KEY: &str = "usage_session_timeout_seconds";
+
 #[derive(Debug, Clone, FromRow)]
 struct UsageJoinedRow {
     pub id: String,
@@ -131,6 +134,46 @@ pub async fn close_open_session(pool: &SqlitePool, device_id: &str) -> Result<Op
     .await?;
 
     Ok(Some(id))
+}
+
+pub async fn usage_session_timeout_seconds(pool: &SqlitePool) -> Result<u32> {
+    let value = crate::infrastructure::device_repository::get_config_value_u32(
+        pool,
+        USAGE_SESSION_TIMEOUT_CONFIG_KEY,
+    )
+    .await?;
+    Ok(value.filter(|&v| v >= 1).unwrap_or(DEFAULT_USAGE_SESSION_TIMEOUT_SECONDS))
+}
+
+/// 按心跳超时关闭未结束会话，结束时间取设备最后一次心跳。
+pub async fn close_stale_sessions(pool: &SqlitePool) -> Result<u64> {
+    let timeout = usage_session_timeout_seconds(pool).await?;
+    let modifier = format!("-{} seconds", timeout);
+    let result = sqlx::query(
+        r#"UPDATE device_usage_records
+           SET end_time = (
+                 SELECT last_seen_at FROM student_devices
+                 WHERE student_devices.id = device_usage_records.device_id
+               ),
+               duration_seconds = MAX(0, CAST((
+                 julianday((
+                   SELECT last_seen_at FROM student_devices
+                   WHERE student_devices.id = device_usage_records.device_id
+                 )) - julianday(start_time)
+               ) * 86400 AS INTEGER))
+           WHERE end_time IS NULL
+             AND EXISTS (
+               SELECT 1 FROM student_devices d
+               WHERE d.id = device_usage_records.device_id
+                 AND d.last_seen_at IS NOT NULL
+                 AND d.last_seen_at < datetime('now', ?)
+             )"#
+    )
+    .bind(&modifier)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
 /// 开启一条使用会话。开启前先关闭该设备已有的未结束会话，保证同一设备至多一条未结束会话。

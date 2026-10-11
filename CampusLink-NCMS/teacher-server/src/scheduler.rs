@@ -19,6 +19,11 @@ pub fn start(pool: SqlitePool, ws_tx: broadcast::Sender<String>) {
             if let Err(e) = mark_stale_offline(&pool).await {
                 error!("Stale device offline check failed: {}", e);
             }
+            match crate::domain::usage::close_stale_sessions(&pool).await {
+                Ok(n) if n > 0 => info!("Closed {} stale usage session(s) by heartbeat timeout", n),
+                Ok(_) => {}
+                Err(e) => error!("Stale usage session close failed: {}", e),
+            }
         }
     });
 }
