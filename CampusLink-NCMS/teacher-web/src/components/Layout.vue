@@ -88,6 +88,7 @@
             <div class="user-area">
               <span class="user-info">{{ currentDisplayName }}</span>
               <el-button link type="primary" @click="passwordVisible = true">修改密码</el-button>
+              <el-button link type="primary" @click="handleLogout">退出</el-button>
             </div>
           </div>
         </el-header>
@@ -116,11 +117,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { changeOwnPassword } from '@/api/users'
 
-const { connect } = useWebSocket()
+const { connect, disconnect } = useWebSocket()
+const router = useRouter()
 
 const currentUser = (() => {
   try {
@@ -170,6 +173,13 @@ async function handleChangePassword() {
   } finally {
     passwordSaving.value = false
   }
+}
+
+function handleLogout() {
+  disconnect()
+  localStorage.removeItem('token')
+  localStorage.removeItem('user')
+  router.push('/login')
 }
 
 onMounted(() => {

@@ -171,6 +171,7 @@ pub fn start_admission_monitor(config: Config) {
                     }
                     if code == Some(EXIT_TEACHER) {
                         info!("Admission unlocked by teacher super password (exit 10)");
+                        crate::websocket::report_local_unlock(&config).await;
                         break;
                     }
                     warn!("campus-checkin exited unexpectedly ({:?}), relaunching", code);

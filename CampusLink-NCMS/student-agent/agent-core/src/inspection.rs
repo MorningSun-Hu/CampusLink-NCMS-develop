@@ -4,7 +4,7 @@ use tracing::info;
 
 use crate::config::Config;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct InspectionItem {
     pub item_name: String,
     pub status: String,

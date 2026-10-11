@@ -204,6 +204,7 @@ impl CheckinApp {
 
     fn try_teacher_unlock(&mut self) {
         if self.teacher_input == self.lock_password && !self.lock_password.is_empty() {
+            report_local_unlock(&self.server_url, &self.device_id);
             close_session(&self.server_url, &self.device_id, Some("teacher_unlock"));
             let _ = writeln!(std::io::stderr(), "campus-checkin: teacher unlock");
             exit_with(EXIT_TEACHER);
@@ -348,6 +349,16 @@ fn close_session(server_url: &str, device_id: &str, reason: Option<&str>) {
     if let Some(r) = reason {
         body["reason"] = serde_json::Value::String(r.to_string());
     }
+    let _ = client.post(&url).json(&body).send();
+}
+
+fn report_local_unlock(server_url: &str, device_id: &str) {
+    let client = match http_client() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let url = format!("{}/api/devices/local-unlock", server_url);
+    let body = serde_json::json!({ "device_id": device_id });
     let _ = client.post(&url).json(&body).send();
 }
 

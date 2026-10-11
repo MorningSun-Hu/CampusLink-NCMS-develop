@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn, error, debug};
@@ -8,6 +10,7 @@ use crate::config::Config;
 use crate::command_handler::{CommandHandler, HeartbeatRequest};
 use crate::process_guard;
 use crate::crypto;  // added for message encryption
+use crate::netguard::{self, NetguardEvent, NetguardShared};
 
 /// WebSocket 客户端
 pub struct WebSocketClient {
@@ -193,6 +196,21 @@ impl WebSocketClient {
     }
 }
 
+pub async fn report_local_unlock(config: &Config) {
+    let Some(device_id) = config.device_id.as_deref() else {
+        return;
+    };
+    if device_id.is_empty() {
+        return;
+    }
+    let url = format!("{}/api/devices/local-unlock", config.teacher_server_url);
+    let body = serde_json::json!({ "device_id": device_id });
+    match reqwest::Client::new().post(&url).json(&body).send().await {
+        Ok(_) => info!("Reported local unlock for {}", device_id),
+        Err(e) => warn!("local-unlock report failed: {}", e),
+    }
+}
+
 /// WebSocket 心跳循环管理器
 pub struct HeartbeatLoop {
     client: WebSocketClient,
@@ -202,6 +220,8 @@ pub struct HeartbeatLoop {
     process_guard_interval: std::time::Duration,
     unlock_rx: mpsc::UnboundedReceiver<String>,
     mode_synced: bool,
+    teacher_reachable: Arc<AtomicBool>,
+    netguard_shared: Arc<Mutex<NetguardShared>>,
 }
 
 impl HeartbeatLoop {
@@ -214,10 +234,12 @@ impl HeartbeatLoop {
             client,
             heartbeat_interval: std::time::Duration::from_secs(30),
             command_handler,
-            config,
             process_guard_interval: std::time::Duration::from_secs(60),
             unlock_rx,
             mode_synced: false,
+            teacher_reachable: Arc::new(AtomicBool::new(false)),
+            netguard_shared: Arc::new(Mutex::new(NetguardShared::from_config(&config))),
+            config,
         }
     }
 
@@ -227,6 +249,14 @@ impl HeartbeatLoop {
 
         let local = crate::mode::normalize_local_mode(&self.config.current_mode);
         self.apply_mode(&local).await;
+        self.publish_netguard();
+        let (ng_tx, mut ng_rx) = mpsc::unbounded_channel();
+        netguard::spawn(
+            self.netguard_shared.clone(),
+            self.teacher_reachable.clone(),
+            self.command_handler.unlock_tx().clone(),
+            ng_tx,
+        );
         self.connect_with_retry().await;
 
         let mut heartbeat_interval = tokio::time::interval(self.heartbeat_interval);
@@ -266,6 +296,12 @@ impl HeartbeatLoop {
                         self.config.lock_pid = None;
                         self.config.mode_before_lock = self.command_handler.config.mode_before_lock.clone();
                         self.config.lock_is_overlay = self.command_handler.config.lock_is_overlay;
+                        self.sync_config_from_handler();
+                        if let Ok(mut g) = self.netguard_shared.lock() {
+                            g.overlay_locked = false;
+                            g.reason = None;
+                        }
+                        report_local_unlock(&self.config).await;
                         if start_admission {
                             crate::attendance::start_admission_monitor(self.config.clone());
                         }
@@ -275,6 +311,10 @@ impl HeartbeatLoop {
                         }
                         println!("\n[SCREEN UNLOCKED] Restored to {} mode\n", restore);
                     }
+                }
+
+                ev = ng_rx.recv() => {
+                    self.handle_netguard_event(ev).await;
                 }
                 
                 // 接收消息
@@ -290,6 +330,7 @@ impl HeartbeatLoop {
                             self.config.lock_pid = self.command_handler.config.lock_pid;
                             self.config.mode_before_lock = self.command_handler.config.mode_before_lock.clone();
                             self.config.lock_is_overlay = self.command_handler.config.lock_is_overlay;
+                            self.sync_config_from_handler();
                         }
                         Ok(None) => {
                             warn!("Connection lost, reconnecting");
@@ -314,6 +355,52 @@ impl HeartbeatLoop {
         self.config.device_id = self.command_handler.config.device_id.clone();
         self.config.session_key = self.command_handler.config.session_key.clone();
         self.config.teacher_fingerprint = self.command_handler.config.teacher_fingerprint.clone();
+        self.client.config.current_mode = self.config.current_mode.clone();
+        self.client.config.device_id = self.config.device_id.clone();
+        self.client.config.session_key = self.config.session_key.clone();
+        self.client.config.teacher_fingerprint = self.config.teacher_fingerprint.clone();
+        self.publish_netguard();
+    }
+
+    fn publish_netguard(&self) {
+        let Ok(mut g) = self.netguard_shared.lock() else {
+            return;
+        };
+        g.mode = self.config.current_mode.clone();
+        g.device_id = self.config.device_id.clone().unwrap_or_default();
+        g.lock_password = self.config.lock_password.clone().unwrap_or_else(|| "admin123".to_string());
+        g.teacher_server_url = self.config.teacher_server_url.clone();
+    }
+
+    async fn handle_netguard_event(&mut self, ev: Option<NetguardEvent>) {
+        let Some(ev) = ev else {
+            return;
+        };
+        match ev {
+            NetguardEvent::Locked { reason } => {
+                crate::mode::remember_mode_before_lock(&mut self.command_handler.config, true);
+                self.command_handler.config.is_locked = true;
+                let _ = self.command_handler.config.save();
+                self.sync_config_from_handler();
+                info!("Network overlay lock active reason={}", reason);
+                println!("\n[NETWORK LOCK] {}\n", reason);
+            }
+            NetguardEvent::Recovered { reason } => {
+                let restore = crate::mode::resolve_restore_mode(&self.command_handler.config, "teaching");
+                let _ = crate::mode::apply_unlock_restore(&mut self.command_handler.config, restore);
+                self.sync_config_from_handler();
+                info!("Network overlay recovered reason={}", reason);
+                println!("\n[NETWORK RESTORED] {}\n", reason);
+            }
+            NetguardEvent::Cleared => {
+                let restore = crate::mode::resolve_restore_mode(
+                    &self.command_handler.config,
+                    &self.command_handler.config.current_mode,
+                );
+                let _ = crate::mode::apply_unlock_restore(&mut self.command_handler.config, restore);
+                self.sync_config_from_handler();
+            }
+        }
     }
 
     async fn apply_mode(&mut self, target: &str) {
@@ -331,6 +418,7 @@ impl HeartbeatLoop {
     }
 
     async fn connect_with_retry(&mut self) {
+        self.teacher_reachable.store(false, Ordering::Relaxed);
         loop {
             if self.config.device_id.is_none() {
                 match crate::register::collect_and_register(&mut self.config).await {
@@ -342,6 +430,7 @@ impl HeartbeatLoop {
                         self.command_handler.config.heartbeat_interval_seconds =
                             self.config.heartbeat_interval_seconds;
                         self.client = WebSocketClient::new(self.config.clone());
+                        self.publish_netguard();
                         info!("Registration completed");
                     }
                     Err(e) => {
@@ -356,6 +445,7 @@ impl HeartbeatLoop {
 
             match self.client.connect().await {
                 Ok(()) => {
+                    self.teacher_reachable.store(true, Ordering::Relaxed);
                     if !self.mode_synced {
                         match self.sync_teacher_mode().await {
                             Ok(()) => self.mode_synced = true,

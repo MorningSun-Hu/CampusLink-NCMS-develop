@@ -11,6 +11,7 @@ pub mod inspection;
 pub mod student_auth;
 pub mod hardware;
 pub mod process_guard;
+pub mod netguard;
 
 pub use config::Config;
 pub use register::*;

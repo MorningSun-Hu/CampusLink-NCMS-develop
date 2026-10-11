@@ -22,7 +22,7 @@ use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
 
-use handlers::{register_device_handler, list_devices_handler, mode_switch_handler, ws_handler, lock_screen_handler, unlock_handler, AppState};
+use handlers::{register_device_handler, list_devices_handler, mode_switch_handler, ws_handler, lock_screen_handler, unlock_handler, local_unlock_handler, AppState};
 use attendance_handlers::{check_in_handler, statistics_handler, retroactive_handler, list_attendance_handler, export_attendance_handler, attendance_context_handler, attendance_board_handler};
 use usage_handlers::{list_usage_handler, export_usage_handler, end_usage_handler, close_usage_handler};
 use inspection_handlers::{submit_inspection_handler, list_inspections_handler, list_alerts_handler, resolve_alert_handler, export_inspection_handler};
@@ -102,6 +102,7 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/auth/student-login", post(student_login_handler))
         .route("/api/auth/student-set-password", post(student_set_password_handler))
         .route("/api/devices/register", post(register_device_handler))
+        .route("/api/devices/local-unlock", post(local_unlock_handler))
         // Student agent report endpoints: authenticated by device_id (registered device)
         .route("/api/attendance/check-in", post(check_in_handler))
         .route("/api/usage/close", post(close_usage_handler))

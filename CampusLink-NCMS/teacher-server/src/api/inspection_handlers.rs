@@ -48,6 +48,15 @@ pub async fn submit_inspection_handler(
         return Json(ApiResponse::error(401, "设备未注册，请先注册".to_string()));
     }
 
+    let alert_type = req.inspection_type.clone();
+    let device_id = req.device_id.clone();
+    let is_abnormal = req.is_abnormal;
+    let desc = req.items.iter()
+        .find(|i| i.status != "normal")
+        .or_else(|| req.items.first())
+        .and_then(|i| i.description.clone())
+        .unwrap_or_default();
+
     let domain_items: Vec<DomainInspectionItem> = req.items.into_iter().map(|i| DomainInspectionItem {
         item_name: i.item_name,
         status: i.status,
@@ -61,7 +70,18 @@ pub async fn submit_inspection_handler(
         &domain_items,
         req.is_abnormal,
     ).await {
-        Ok(response) => Json(ApiResponse::success(response)),
+        Ok(response) => {
+            if is_abnormal {
+                let msg = serde_json::json!({
+                    "type": "alert",
+                    "alert_type": alert_type,
+                    "device_id": device_id,
+                    "description": desc,
+                }).to_string();
+                let _ = state.ws_tx.send(msg);
+            }
+            Json(ApiResponse::success(response))
+        }
         Err(e) => {
             error!("Submit inspection failed: {}", e);
             Json(ApiResponse::error(500, "提交检查失败".to_string()))

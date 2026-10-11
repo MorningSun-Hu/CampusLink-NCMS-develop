@@ -11,6 +11,7 @@ mod student_auth;
 mod hardware;
 mod process_guard;
 mod discovery;
+mod netguard;
 
 use anyhow::Result;
 use std::path::PathBuf;

@@ -13,6 +13,7 @@
             <el-option label="设备检查" value="equipment" />
             <el-option label="键盘检查" value="keyboard" />
             <el-option label="鼠标检查" value="mouse" />
+            <el-option label="网络检查" value="network" />
           </el-select>
         </div>
         <el-table :data="inspections" v-loading="inspLoading" border stripe>
@@ -27,7 +28,11 @@
               <el-tag>{{ inspectionTypeLabel(row.inspection_type) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="item_name" label="项目" />
+          <el-table-column prop="item_name" label="项目">
+            <template #default="{ row }">
+              {{ itemNameLabel(row.item_name) }}
+            </template>
+          </el-table-column>
           <el-table-column prop="status" label="状态">
             <template #default="{ row }">
               <el-tag :type="row.status === 'normal' ? 'success' : 'danger'">
@@ -62,7 +67,7 @@
           <el-table-column prop="device_id" label="设备ID" width="200" />
           <el-table-column prop="alert_type" label="告警类型">
             <template #default="{ row }">
-              <el-tag type="warning">{{ row.alert_type }}</el-tag>
+              <el-tag type="warning">{{ alertTypeLabel(row.alert_type) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="description" label="描述" />
@@ -210,6 +215,23 @@ function inspectionTypeLabel(type: string) {
     equipment: '设备检查',
     keyboard: '键盘检查',
     mouse: '鼠标检查',
+    network: '网络检查',
+  }
+  return map[type] || type
+}
+
+function itemNameLabel(name: string) {
+  const map: Record<string, string> = {
+    physical_link: '物理链路断开',
+    firewall_block: '故意阻断',
+  }
+  return map[name] || name
+}
+
+function alertTypeLabel(type: string) {
+  const map: Record<string, string> = {
+    network: '网络告警',
+    hardware: '硬件告警',
   }
   return map[type] || type
 }

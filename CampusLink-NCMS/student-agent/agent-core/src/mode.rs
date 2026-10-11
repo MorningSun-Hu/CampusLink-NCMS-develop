@@ -240,6 +240,19 @@ async fn spawn_lock_screen(
     Ok(())
 }
 
+/// Overlay lock used by netguard: keep current_mode, remember mode_before_lock.
+pub async fn start_overlay_lock(
+    config: &mut Config,
+    unlock_tx: &Option<mpsc::UnboundedSender<String>>,
+) -> Result<()> {
+    remember_mode_before_lock(config, true);
+    spawn_lock_screen(config, unlock_tx).await?;
+    if let Err(e) = config.save() {
+        error!("Failed to save config after overlay lock: {}", e);
+    }
+    Ok(())
+}
+
 pub fn parse_mode(mode_str: &str) -> ModeType {
     match mode_str {
         "teaching" => ModeType::Teaching,

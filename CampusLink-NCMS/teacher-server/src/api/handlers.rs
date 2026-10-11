@@ -307,6 +307,24 @@ pub async fn unlock_handler(
     Json(ApiResponse::success(serde_json::json!({"device_id": req.device_id, "status": "unlock_sent", "restore_mode": restore})))
 }
 
+pub async fn local_unlock_handler(
+    State(state): State<AppState>,
+    Json(req): Json<LockScreenRequest>,
+) -> impl IntoResponse {
+    if !device::device_exists(&state.pool, &req.device_id).await.unwrap_or(false) {
+        return Json(ApiResponse::error(401, "设备未注册，请先注册".to_string()));
+    }
+    let restore = device::unlock_restore_mode(&state.pool, &req.device_id)
+        .await
+        .unwrap_or_else(|_| "open".to_string());
+    info!("Local unlock reported device={}, restore_mode={}", req.device_id, restore);
+    Json(ApiResponse::success(serde_json::json!({
+        "device_id": req.device_id,
+        "status": "local_unlock",
+        "restore_mode": restore
+    })))
+}
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<HashMap<String, String>>,
@@ -450,6 +468,13 @@ async fn process_heartbeat_json(pool: &SqlitePool, text: &str) -> Option<String>
             .await
             .ok()
             .flatten();
+            if db_mode.as_deref() == Some("locked") {
+                if let Some(mode) = data.get("mode").and_then(|v| v.as_str()) {
+                    if matches!(mode, "open" | "teaching" | "exam") {
+                        let _ = device::unlock_restore_mode(pool, device_id).await;
+                    }
+                }
+            }
             if db_mode.as_deref() == Some("exam") {
                 let _ = usage::ensure_exam_session(pool, device_id).await;
             }

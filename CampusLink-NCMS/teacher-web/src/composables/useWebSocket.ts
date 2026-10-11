@@ -52,7 +52,7 @@ function handleMessage(msg: WsMessage) {
   switch (msg.type) {
     case 'alert':
       ElNotification({
-        title: msg.alert_type === 'hardware' ? '硬件告警' : '检查告警',
+        title: alertTitle(msg.alert_type),
         message: msg.description || msg.message || '新告警通知',
         type: 'warning',
         duration: 5000,
@@ -82,9 +82,16 @@ function disconnect() {
     clearTimeout(reconnectTimer.value)
     reconnectTimer.value = null
   }
+  reconnectAttempts = maxReconnectAttempts
   ws.value?.close()
   ws.value = null
   connected.value = false
+}
+
+function alertTitle(alertType?: string) {
+  if (alertType === 'hardware') return '硬件告警'
+  if (alertType === 'network') return '网络告警'
+  return '检查告警'
 }
 
 export function useWebSocket() {
