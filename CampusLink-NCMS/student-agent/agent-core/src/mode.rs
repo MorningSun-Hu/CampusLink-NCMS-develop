@@ -209,28 +209,17 @@ async fn spawn_lock_screen(
         .stderr(Stdio::null())
         .spawn()
     {
-        Ok(mut child) => {
+        Ok(child) => {
             let pid = child.id();
             info!("campus-lock started, PID={}", pid);
             config.lock_pid = Some(pid);
             config.is_locked = true;
 
-            // 在后台监控 campus-lock 进程，退出时通知心跳循环
-            if let Some(tx) = unlock_tx {
-                let tx = tx.clone();
-                let device_id = config.device_id.clone().unwrap_or_default();
-                tokio::task::spawn_blocking(move || {
-                    let _ = child.wait();
-                    info!("campus-lock (PID={}) exited, user unlocked screen", pid);
-                    let msg = serde_json::json!({
-                        "type": "unlock",
-                        "device_id": device_id,
-                        "timestamp": chrono::Utc::now().timestamp(),
-                    });
-                    let _ = tx.send(msg.to_string());
-                });
-                info!("campus-lock exit monitor started");
-            }
+            watch_lock_process(
+                child,
+                unlock_tx.clone(),
+                config.device_id.clone().unwrap_or_default(),
+            );
         }
         Err(e) => {
             error!("Failed to spawn campus-lock: {}", e);
@@ -238,6 +227,28 @@ async fn spawn_lock_screen(
     }
 
     Ok(())
+}
+
+/// Wait for campus-lock to exit and notify the heartbeat loop.
+pub fn watch_lock_process(
+    mut child: std::process::Child,
+    unlock_tx: Option<mpsc::UnboundedSender<String>>,
+    device_id: String,
+) {
+    let pid = child.id();
+    tokio::task::spawn_blocking(move || {
+        let _ = child.wait();
+        info!("campus-lock (PID={}) exited, user unlocked screen", pid);
+        if let Some(tx) = unlock_tx {
+            let msg = serde_json::json!({
+                "type": "unlock",
+                "device_id": device_id,
+                "timestamp": chrono::Utc::now().timestamp(),
+            });
+            let _ = tx.send(msg.to_string());
+        }
+    });
+    info!("campus-lock exit monitor started");
 }
 
 /// Overlay lock used by netguard: keep current_mode, remember mode_before_lock.

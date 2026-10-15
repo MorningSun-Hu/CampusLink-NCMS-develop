@@ -18,6 +18,7 @@ mod keyhook_impl {
         GetClassNameW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
         SetForegroundWindow, SetWindowPos, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
         HWND_TOP, HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_SHOWWINDOW,
         WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
@@ -224,7 +225,7 @@ mod keyhook_impl {
                 0,
                 0,
                 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
             );
             let _ = AttachThreadInput(self_thread, fg_thread, false);
         }

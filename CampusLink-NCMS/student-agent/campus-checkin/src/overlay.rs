@@ -22,7 +22,7 @@ pub fn checkin_window_policy(teaching: bool) -> CheckinWindowPolicy {
         CheckinWindowPolicy {
             fullscreen: false,
             maximized: true,
-            always_on_top: false,
+            always_on_top: true,
             allow_ime: true,
         }
     }
@@ -117,7 +117,7 @@ mod tests {
     fn open_overlay_keeps_ime_usable() {
         let policy = checkin_window_policy(false);
         assert!(policy.maximized);
-        assert!(!policy.always_on_top);
+        assert!(policy.always_on_top);
         assert!(policy.allow_ime);
         assert!(!policy.fullscreen);
     }
@@ -151,5 +151,13 @@ mod tests {
         assert!(!should_steal_focus("Windows.UI.Input.InputSite.WindowClass", true));
         assert!(should_steal_focus("CabinetWClass", true));
         assert!(should_steal_focus("IME", false));
+    }
+
+    #[test]
+    fn focus_keeper_steals_from_console_and_desktop() {
+        assert!(should_steal_focus("ConsoleWindowClass", true));
+        assert!(should_steal_focus("Progman", true));
+        assert!(should_steal_focus("WorkerW", true));
+        assert!(should_steal_focus("Shell_TrayWnd", true));
     }
 }

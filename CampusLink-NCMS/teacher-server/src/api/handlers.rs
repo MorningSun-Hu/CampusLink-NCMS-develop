@@ -276,6 +276,9 @@ pub async fn lock_screen_handler(
     State(state): State<AppState>,
     Json(req): Json<LockScreenRequest>,
 ) -> impl IntoResponse {
+    if device::lock_kind_of(&state.pool, &req.device_id).await.unwrap_or_default() == "mode" {
+        return Json(ApiResponse::error(400, "锁屏模式下不可临时锁定，请通过切换模式退出".to_string()));
+    }
     let reason = req.reason.unwrap_or_else(|| "Teacher locked this device".to_string());
     let _ = device::remember_mode_and_lock(&state.pool, &req.device_id).await;
     let msg = format!(
@@ -293,9 +296,10 @@ pub async fn unlock_handler(
     State(state): State<AppState>,
     Json(req): Json<LockScreenRequest>,
 ) -> impl IntoResponse {
-    let restore = device::unlock_restore_mode(&state.pool, &req.device_id)
-        .await
-        .unwrap_or_else(|_| "open".to_string());
+    let restore = match device::remote_unlock_overlay(&state.pool, &req.device_id).await {
+        Ok(mode) => mode,
+        Err(e) => return Json(ApiResponse::error(400, e.to_string())),
+    };
     let msg = format!(
         r#"{{"type":"unlock","device_id":"{}","restore_mode":"{}","timestamp":{}}}"#,
         req.device_id,

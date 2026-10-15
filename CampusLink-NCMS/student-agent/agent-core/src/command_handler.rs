@@ -8,6 +8,7 @@ use tracing::{info, warn, error, debug};
 use crate::config::Config;
 use crate::mode::{
     apply_unlock_restore, handle_mode_switch, remember_mode_before_lock, resolve_restore_mode,
+    watch_lock_process,
 };
 
 /// WebSocket 命令枚举
@@ -118,9 +119,8 @@ impl CommandHandler {
                 info!("Received lock screen command: reason={}", reason);
                 remember_mode_before_lock(&mut self.config, true);
                 if self.config.is_locked {
-                    self.config.current_mode = "locked".to_string();
                     let _ = self.config.save();
-                    info!("Screen already locked, mode set to locked");
+                    info!("Screen already locked, keep overlay lock");
                     return Ok(());
                 }
                 let exe_dir = std::env::current_exe()
@@ -163,16 +163,24 @@ impl CommandHandler {
                                 info!("campus-lock still running, lock screen active");
                                 self.config.lock_pid = Some(child.id());
                                 self.config.is_locked = true;
-                                self.config.current_mode = "locked".to_string();
                                 let _ = self.config.save();
                                 println!("\n[SCREEN LOCKED] {}\n", reason);
+                                watch_lock_process(
+                                    child,
+                                    self.unlock_tx.clone(),
+                                    self.config.device_id.clone().unwrap_or_default(),
+                                );
                             }
                             Err(e) => {
                                 error!("Failed to check child status: {}", e);
                                 self.config.lock_pid = Some(child.id());
                                 self.config.is_locked = true;
-                                self.config.current_mode = "locked".to_string();
                                 let _ = self.config.save();
+                                watch_lock_process(
+                                    child,
+                                    self.unlock_tx.clone(),
+                                    self.config.device_id.clone().unwrap_or_default(),
+                                );
                             }
                         }
                     }

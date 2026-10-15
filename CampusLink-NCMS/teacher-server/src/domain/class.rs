@@ -413,8 +413,9 @@ pub async fn switch_class_mode(pool: &SqlitePool, class_id: &str, target_mode: &
         for (device_id, seat_no) in rows {
             let _ = crate::domain::usage::close_open_session(pool, &device_id).await;
             let effective = if seat_matches(&seat_no, &student_seats) { "teaching" } else { "locked" };
-            sqlx::query("UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?")
+            sqlx::query("UPDATE student_devices SET current_mode = ?, lock_kind = ?, updated_at = datetime('now') WHERE id = ?")
                 .bind(effective)
+                .bind(if effective == "locked" { "mode" } else { "none" })
                 .bind(&device_id)
                 .execute(pool)
                 .await?;
@@ -437,8 +438,9 @@ pub async fn switch_class_mode(pool: &SqlitePool, class_id: &str, target_mode: &
 
     for did in &device_ids {
         let _ = crate::domain::usage::close_open_session(pool, did).await;
-        sqlx::query("UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?")
+        sqlx::query("UPDATE student_devices SET current_mode = ?, lock_kind = ?, updated_at = datetime('now') WHERE id = ?")
             .bind(target_mode)
+            .bind(if target_mode == "locked" { "mode" } else { "none" })
             .bind(did)
             .execute(pool)
             .await?;

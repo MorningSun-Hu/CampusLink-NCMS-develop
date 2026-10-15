@@ -87,8 +87,8 @@
             <span class="system-name">网络教室管理系统</span>
             <div class="user-area">
               <span class="user-info">{{ currentDisplayName }}</span>
-              <el-button link type="primary" @click="passwordVisible = true">修改密码</el-button>
-              <el-button link type="primary" @click="handleLogout">退出</el-button>
+              <el-button @click="passwordVisible = true">修改密码</el-button>
+              <el-button type="danger" @click="handleLogout">退出登录</el-button>
             </div>
           </div>
         </el-header>

@@ -13,6 +13,29 @@ static ADMISSION_GEN: AtomicU64 = AtomicU64::new(0);
 const EXIT_OK: i32 = 0;
 const EXIT_TEACHER: i32 = 10;
 
+#[cfg(target_os = "windows")]
+mod console_win {
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn GetConsoleWindow() -> *mut std::ffi::c_void;
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        pub fn ShowWindow(hwnd: *mut std::ffi::c_void, ncmdshow: i32) -> i32;
+    }
+}
+
+fn set_console_visible(visible: bool) {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        let hwnd = console_win::GetConsoleWindow();
+        if !hwnd.is_null() {
+            console_win::ShowWindow(hwnd, if visible { 5 } else { 0 });
+        }
+    }
+    let _ = visible;
+}
+
 #[derive(Debug, Serialize)]
 pub struct CheckInRequest {
     pub device_id: String,
@@ -123,6 +146,7 @@ pub fn start_admission_monitor(config: Config) {
 
     tokio::spawn(async move {
         info!("Admission monitor started (gen={}, mode={})", gen, mode);
+        set_console_visible(false);
         loop {
             if ADMISSION_GEN.load(Ordering::SeqCst) != gen {
                 info!("Admission monitor gen={} cancelled", gen);
@@ -144,15 +168,20 @@ pub fn start_admission_monitor(config: Config) {
 
             info!("Launching campus-checkin (mode={}) at {:?}", run_mode, exe_clone);
             let wait_result = tokio::task::spawn_blocking(move || {
-                let mut child = Command::new(&exe_clone)
-                    .arg(&server_url)
+                let mut cmd = Command::new(&exe_clone);
+                cmd.arg(&server_url)
                     .arg(&device_id)
                     .arg(&run_mode)
                     .arg(&lock_password)
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()?;
+                    .stderr(Stdio::null());
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x08000000);
+                }
+                let mut child = cmd.spawn()?;
                 child.wait()
             })
             .await;
@@ -186,6 +215,7 @@ pub fn start_admission_monitor(config: Config) {
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+        set_console_visible(true);
         info!("Admission monitor gen={} stopped", gen);
     });
 }

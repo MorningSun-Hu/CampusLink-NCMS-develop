@@ -11,6 +11,7 @@ export interface Device {
   classId: string | null
   className: string | null
   seatNo: string | null
+  lockKind?: string
 }
 
 export interface RegisterDeviceRequest {

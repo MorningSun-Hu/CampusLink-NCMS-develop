@@ -559,10 +559,10 @@ impl CheckinApp {
                     [ui.available_width(), 36.0],
                     egui::TextEdit::singleline(&mut self.name_input).hint_text("请输入姓名"),
                 );
-                if !self.name_focused {
+                if !name_resp.has_focus() {
                     name_resp.request_focus();
-                    self.name_focused = true;
                 }
+                self.name_focused = name_resp.has_focus();
                 if name_resp.has_focus() && !self.ime_initialized {
                     if enable_chinese_ime() {
                         self.ime_initialized = true;

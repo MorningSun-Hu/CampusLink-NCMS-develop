@@ -37,6 +37,7 @@
       <el-table-column prop="currentMode" label="当前模式">
         <template #default="{ row }">
           <el-tag :type="getModeTagType(row.currentMode)">{{ formatMode(row.currentMode) }}</el-tag>
+          <el-tag v-if="row.lockKind === 'overlay'" type="warning" style="margin-left: 6px">临时锁定</el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="lastSeenAt" label="最后心跳时间">
@@ -44,11 +45,27 @@
           {{ formatDateTime(row.lastSeenAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="250">
+      <el-table-column label="操作" width="280">
         <template #default="{ row }">
           <el-button type="primary" size="small" @click="showModeSwitchDialog(row)">切换模式</el-button>
-          <el-button type="warning" size="small" @click="handleLock(row)">锁屏</el-button>
-          <el-button type="success" size="small" @click="handleUnlock(row)">解锁</el-button>
+          <el-button
+            v-if="isModeLock(row)"
+            size="small"
+            disabled
+            title="锁屏模式下请通过「切换模式」退出"
+          >临时锁定</el-button>
+          <el-button
+            v-else-if="isOverlayLock(row)"
+            type="success"
+            size="small"
+            @click="handleUnlock(row)"
+          >解除锁定</el-button>
+          <el-button
+            v-else
+            type="warning"
+            size="small"
+            @click="handleLock(row)"
+          >临时锁定</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -61,7 +78,7 @@
             <el-option label="开放模式" value="open" />
             <el-option label="授课模式" value="teaching" />
             <el-option label="考试模式" value="exam" />
-            <el-option label="锁定" value="locked" />
+            <el-option label="锁屏模式" value="locked" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="modeForm.targetMode === 'teaching'" label="班级">
@@ -151,7 +168,7 @@ const confirmModeSwitch = async () => {
     }
     const data = res.data || {}
     if (data.admissionBlocked) {
-      ElMessage.warning('座位不匹配，该设备已进入锁定模式')
+      ElMessage.warning('座位不匹配，该设备已进入锁屏模式')
     } else if (modeForm.value.targetMode === 'teaching') {
       ElMessage.success('已进入授课模式')
     } else {
@@ -182,30 +199,42 @@ const formatMode = (mode: string) => {
     open: '开放模式',
     teaching: '授课模式',
     exam: '考试模式',
-    locked: '锁定',
+    locked: '锁屏模式',
   }
   return names[mode] || mode
 }
 
+const isModeLock = (device: Device) => device.lockKind === 'mode'
+
+const isOverlayLock = (device: Device) => device.lockKind === 'overlay' || (device.currentMode === 'locked' && device.lockKind !== 'mode')
+
 const handleLock = async (device: Device) => {
   try {
-    await lockDevice(device.id, '教师远程锁定')
-    ElMessage.success('锁屏命令已发送')
+    const res = await lockDevice(device.id, '教师远程锁定')
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '临时锁定失败')
+      return
+    }
+    ElMessage.success('已临时锁定')
     await loadDevices()
   } catch (error) {
     console.error('Lock failed:', error)
-    ElMessage.error('锁屏命令发送失败')
+    ElMessage.error('临时锁定失败')
   }
 }
 
 const handleUnlock = async (device: Device) => {
   try {
-    await unlockDevice(device.id)
-    ElMessage.success('解锁命令已发送')
+    const res = await unlockDevice(device.id)
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '解除锁定失败')
+      return
+    }
+    ElMessage.success('已解除锁定')
     await loadDevices()
   } catch (error) {
     console.error('Unlock failed:', error)
-    ElMessage.error('解锁命令发送失败')
+    ElMessage.error('解除锁定失败')
   }
 }
 

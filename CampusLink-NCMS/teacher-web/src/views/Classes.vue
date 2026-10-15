@@ -180,7 +180,7 @@ const modes = [
   { value: 'open', label: '开放模式' },
   { value: 'teaching', label: '授课模式' },
   { value: 'exam', label: '考试模式' },
-  { value: 'locked', label: '锁定模式' },
+  { value: 'locked', label: '锁屏模式' },
 ]
 
 function modeLabel(mode: string) {

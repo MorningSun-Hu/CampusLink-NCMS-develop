@@ -23,6 +23,7 @@ pub struct DeviceRow {
     pub seat_no: Option<String>,
     pub pending_checkin: i64,
     pub mode_before_lock: String,
+    pub lock_kind: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -42,6 +43,7 @@ pub struct DeviceResponse {
     pub class_id: Option<String>,
     pub class_name: Option<String>,
     pub seat_no: Option<String>,
+    pub lock_kind: String,
 }
 
 impl From<DeviceRow> for DeviceResponse {
@@ -59,6 +61,7 @@ impl From<DeviceRow> for DeviceResponse {
             class_id: row.class_id,
             class_name: None,
             seat_no: row.seat_no,
+            lock_kind: row.lock_kind,
         }
     }
 }
@@ -284,7 +287,7 @@ pub async fn remember_mode_and_lock(pool: &SqlitePool, device_id: &str) -> Resul
                  WHEN current_mode != 'locked' THEN current_mode
                  ELSE mode_before_lock
                END,
-               current_mode = 'locked',
+               lock_kind = 'overlay',
                updated_at = datetime('now')
            WHERE id = ?"#
     )
@@ -301,20 +304,73 @@ pub fn sanitize_restore_mode(mode: &str) -> String {
     }
 }
 
-pub async fn unlock_restore_mode(pool: &SqlitePool, device_id: &str) -> Result<String> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT current_mode, mode_before_lock FROM student_devices WHERE id = ?"
+async fn load_lock_state(pool: &SqlitePool, device_id: &str) -> Result<(String, String, String)> {
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT current_mode, COALESCE(lock_kind, 'none'), COALESCE(mode_before_lock, 'open') FROM student_devices WHERE id = ?"
     )
     .bind(device_id)
     .fetch_optional(pool)
     .await?;
-    let (current, before) = row.unwrap_or_else(|| ("open".to_string(), "open".to_string()));
-    if current != "locked" {
-        return Ok(sanitize_restore_mode(&current));
+    Ok(row.unwrap_or_else(|| ("open".to_string(), "none".to_string(), "open".to_string())))
+}
+
+async fn clear_lock_kind(pool: &SqlitePool, device_id: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE student_devices SET lock_kind = 'none', updated_at = datetime('now') WHERE id = ?"
+    )
+    .bind(device_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn lock_kind_of(pool: &SqlitePool, device_id: &str) -> Result<String> {
+    let (_, kind, _) = load_lock_state(pool, device_id).await?;
+    Ok(kind)
+}
+
+pub async fn remote_unlock_overlay(pool: &SqlitePool, device_id: &str) -> Result<String> {
+    let (current, kind, before) = load_lock_state(pool, device_id).await?;
+    if kind == "mode" {
+        anyhow::bail!("锁屏模式请通过切换模式退出");
     }
-    let restore = sanitize_restore_mode(&before);
-    update_device_mode(pool, device_id, &restore).await?;
-    Ok(restore)
+    clear_lock_kind(pool, device_id).await?;
+    if current == "locked" {
+        let restore = sanitize_restore_mode(&before);
+        update_device_mode(pool, device_id, &restore).await?;
+        return Ok(restore);
+    }
+    Ok(sanitize_restore_mode(&current))
+}
+
+pub async fn local_unlock_device(pool: &SqlitePool, device_id: &str) -> Result<String> {
+    let (current, kind, before) = load_lock_state(pool, device_id).await?;
+    if kind == "mode" {
+        let restore = if current == "locked" {
+            "open".to_string()
+        } else {
+            sanitize_restore_mode(&current)
+        };
+        sqlx::query(
+            "UPDATE student_devices SET current_mode = ?, lock_kind = 'none', updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(&restore)
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+        return Ok(restore);
+    }
+    clear_lock_kind(pool, device_id).await?;
+    if current == "locked" {
+        let restore = sanitize_restore_mode(&before);
+        update_device_mode(pool, device_id, &restore).await?;
+        return Ok(restore);
+    }
+    Ok(sanitize_restore_mode(&current))
+}
+
+pub async fn unlock_restore_mode(pool: &SqlitePool, device_id: &str) -> Result<String> {
+    local_unlock_device(pool, device_id).await
 }
 
 pub struct ModeSwitchOutcome {
@@ -366,9 +422,10 @@ pub async fn switch_device_mode(
     }
 
     sqlx::query(
-        "UPDATE student_devices SET current_mode = ?, updated_at = datetime('now') WHERE id = ?"
+        "UPDATE student_devices SET current_mode = ?, lock_kind = ?, updated_at = datetime('now') WHERE id = ?"
     )
     .bind(&effective_mode)
+    .bind(if effective_mode == "locked" { "mode" } else { "none" })
     .bind(device_id)
     .execute(pool)
     .await?;
@@ -666,5 +723,87 @@ mod tests {
 
         let restore = unlock_restore_mode(&pool, &device_id).await.unwrap();
         assert_eq!(restore, "teaching");
+    }
+
+    #[tokio::test]
+    async fn overlay_lock_keeps_current_mode() {
+        let pool = setup_pool().await;
+        let (device_id, _, _, _) = register_device(
+            &pool,
+            "DEV-OVERLAY-KEEP",
+            "fp-overlay-keep",
+            "host-overlay-keep",
+            "192.168.1.42",
+            "aa:bb:cc",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+        update_device_mode(&pool, &device_id, "teaching").await.unwrap();
+        remember_mode_and_lock(&pool, &device_id).await.unwrap();
+
+        let (mode, kind): (String, String) = sqlx::query_as(
+            "SELECT current_mode, lock_kind FROM student_devices WHERE id = ?"
+        )
+        .bind(&device_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(mode, "teaching");
+        assert_eq!(kind, "overlay");
+    }
+
+    #[tokio::test]
+    async fn remote_unlock_rejects_mode_lock() {
+        let pool = setup_pool().await;
+        let (device_id, _, _, _) = register_device(
+            &pool,
+            "DEV-MODE-LOCK",
+            "fp-mode-lock",
+            "host-mode-lock",
+            "192.168.1.43",
+            "aa:bb:cc",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+        switch_device_mode(&pool, &device_id, "locked", "admin", None).await.unwrap();
+        let err = remote_unlock_overlay(&pool, &device_id).await.unwrap_err();
+        assert!(err.to_string().contains("锁屏模式"));
+        let mode: String = sqlx::query_scalar("SELECT current_mode FROM student_devices WHERE id = ?")
+            .bind(&device_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(mode, "locked");
+    }
+
+    #[tokio::test]
+    async fn local_unlock_mode_lock_follows_or_opens() {
+        let pool = setup_pool().await;
+        let (device_id, _, _, _) = register_device(
+            &pool,
+            "DEV-MODE-ESCAPE",
+            "fp-mode-escape",
+            "host-mode-escape",
+            "192.168.1.44",
+            "aa:bb:cc",
+            "test-agent",
+        )
+        .await
+        .unwrap();
+        switch_device_mode(&pool, &device_id, "locked", "admin", None).await.unwrap();
+        let restore = local_unlock_device(&pool, &device_id).await.unwrap();
+        assert_eq!(restore, "open");
+
+        switch_device_mode(&pool, &device_id, "locked", "admin", None).await.unwrap();
+        update_device_mode(&pool, &device_id, "exam").await.unwrap();
+        sqlx::query("UPDATE student_devices SET lock_kind = 'mode' WHERE id = ?")
+            .bind(&device_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let restore = local_unlock_device(&pool, &device_id).await.unwrap();
+        assert_eq!(restore, "exam");
     }
 }

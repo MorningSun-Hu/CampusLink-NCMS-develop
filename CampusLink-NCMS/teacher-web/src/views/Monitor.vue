@@ -21,6 +21,7 @@
           <el-table-column prop="currentMode" label="当前模式">
             <template #default="{ row }">
               <el-tag>{{ modeLabel(row.currentMode) }}</el-tag>
+              <el-tag v-if="row.lockKind === 'overlay'" type="warning" style="margin-left: 6px">临时锁定</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="lastSeenAt" label="最后心跳时间">
@@ -57,6 +58,7 @@
             'seat-late': isLate(device.lastSeenAt),
             'seat-locked': device.currentMode === 'locked',
             'seat-exam': device.currentMode === 'exam',
+            'seat-overlay': device.lockKind === 'overlay',
           }"
         >
           <div class="seat-index">{{ device.deviceName || device.deviceCode }}</div>
@@ -100,7 +102,7 @@ const modeLabel = (mode: string) => {
     open: '开放',
     teaching: '教学',
     exam: '考试',
-    locked: '锁屏',
+    locked: '锁屏模式',
   }
   return map[mode] || mode
 }
@@ -136,6 +138,7 @@ onMounted(() => {
 .seat-late { background: #fdf6ec; border-color: #e6a23c; }
 .seat-locked { background: #fef0f0; border-color: #f56c6c; }
 .seat-exam { background: #ecf5ff; border-color: #409eff; }
+.seat-overlay { background: #fdf6ec; border-color: #e6a23c; }
 .seat-index { font-size: 12px; color: #999; margin-bottom: 4px; }
 .seat-mode { font-size: 14px; font-weight: 500; color: #333; margin-bottom: 4px; }
 .seat-time { font-size: 11px; color: #bbb; }

@@ -196,18 +196,32 @@ impl WebSocketClient {
     }
 }
 
-pub async fn report_local_unlock(config: &Config) {
+pub async fn report_local_unlock(config: &Config) -> Option<String> {
     let Some(device_id) = config.device_id.as_deref() else {
-        return;
+        return None;
     };
     if device_id.is_empty() {
-        return;
+        return None;
     }
     let url = format!("{}/api/devices/local-unlock", config.teacher_server_url);
     let body = serde_json::json!({ "device_id": device_id });
     match reqwest::Client::new().post(&url).json(&body).send().await {
-        Ok(_) => info!("Reported local unlock for {}", device_id),
-        Err(e) => warn!("local-unlock report failed: {}", e),
+        Ok(resp) => {
+            let parsed = resp.json::<serde_json::Value>().await.ok();
+            let restore = parsed.as_ref().and_then(|v| {
+                let data = v.get("data")?;
+                data.get("restore_mode")
+                    .or_else(|| data.get("restoreMode"))
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+            });
+            info!("Reported local unlock for {}, restore={:?}", device_id, restore);
+            restore
+        }
+        Err(e) => {
+            warn!("local-unlock report failed: {}", e);
+            None
+        }
     }
 }
 
@@ -286,7 +300,12 @@ impl HeartbeatLoop {
                 unlock_msg = self.unlock_rx.recv() => {
                     if let Some(msg) = unlock_msg {
                         info!("Unlock notification received: {}", msg);
-                        let restore = crate::mode::resolve_restore_mode(&self.command_handler.config, "");
+                        let server_restore = report_local_unlock(&self.config).await;
+                        let restore = server_restore
+                            .filter(|m| matches!(m.as_str(), "open" | "teaching" | "exam"))
+                            .unwrap_or_else(|| {
+                                crate::mode::resolve_restore_mode(&self.command_handler.config, "")
+                            });
                         let start_admission = crate::mode::apply_unlock_restore(
                             &mut self.command_handler.config,
                             restore.clone(),
@@ -301,7 +320,6 @@ impl HeartbeatLoop {
                             g.overlay_locked = false;
                             g.reason = None;
                         }
-                        report_local_unlock(&self.config).await;
                         if start_admission {
                             crate::attendance::start_admission_monitor(self.config.clone());
                         }
