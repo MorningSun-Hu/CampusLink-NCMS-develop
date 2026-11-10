@@ -77,3 +77,91 @@ pub async fn query_logs_handler(
         }
     }
 }
+
+#[derive(Debug, Deserialize)]
+pub struct AgentLogFilePayload {
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentLogUploadRequest {
+    pub device_id: String,
+    pub files: Vec<AgentLogFilePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentLogDownloadQuery {
+    pub device_id: String,
+    pub file: String,
+}
+
+pub async fn collect_student_logs_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let ts = chrono::Utc::now().timestamp();
+    let msg = format!(r#"{{"type":"collect_logs","device_id":"","timestamp":{}}}"#, ts);
+    match state.ws_tx.send(msg) {
+        Ok(_) => {
+            info!("Broadcast collect_logs to online students");
+            Json(ApiResponse::success("已向在线学生机下发收集指令"))
+        }
+        Err(_) => Json(ApiResponse::error(500, "当前没有在线学生机可接收指令".to_string())),
+    }
+}
+
+pub async fn upload_agent_logs_handler(
+    State(state): State<AppState>,
+    Json(req): Json<AgentLogUploadRequest>,
+) -> impl IntoResponse {
+    if req.device_id.is_empty() {
+        return Json(ApiResponse::<usize>::error(400, "device_id 不能为空".to_string()));
+    }
+    if !crate::domain::device::device_exists(&state.pool, &req.device_id).await.unwrap_or(false) {
+        return Json(ApiResponse::<usize>::error(401, "设备未注册，请先注册".to_string()));
+    }
+    if req.files.len() > 8 {
+        return Json(ApiResponse::<usize>::error(400, "日志文件数量超出限制".to_string()));
+    }
+    let root = logs::agent_logs_root();
+    let mut saved = 0usize;
+    for file in &req.files {
+        if file.content.len() > 2_000_000 {
+            continue;
+        }
+        match logs::save_agent_log_file(&root, &req.device_id, &file.name, &file.content) {
+            Ok(_) => saved += 1,
+            Err(e) => error!("Save agent log {} failed: {}", file.name, e),
+        }
+    }
+    info!("Saved {} agent log file(s) from {}", saved, req.device_id);
+    Json(ApiResponse::success(saved))
+}
+
+pub async fn list_agent_logs_handler() -> impl IntoResponse {
+    match logs::list_agent_log_files(&logs::agent_logs_root()) {
+        Ok(items) => Json(ApiResponse::success(items)),
+        Err(e) => {
+            error!("List agent logs failed: {}", e);
+            Json(ApiResponse::error(500, "列出学生机日志失败".to_string()))
+        }
+    }
+}
+
+pub async fn download_agent_log_handler(
+    Query(query): Query<AgentLogDownloadQuery>,
+) -> impl IntoResponse {
+    match logs::read_agent_log_file(&logs::agent_logs_root(), &query.device_id, &query.file) {
+        Ok(data) => {
+            let headers = [
+                (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+                (header::CONTENT_DISPOSITION, "attachment; filename=\"student-agent.log\""),
+            ];
+            (axum::http::StatusCode::OK, headers, axum::body::Body::from(data)).into_response()
+        }
+        Err(e) => {
+            error!("Download agent log failed: {}", e);
+            Json(ApiResponse::<()>::error(404, "日志文件不存在".to_string())).into_response()
+        }
+    }
+}

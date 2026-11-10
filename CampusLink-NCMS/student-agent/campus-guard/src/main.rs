@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use anyhow::Result;
 use std::process::Command;
 use std::path::PathBuf;
@@ -12,7 +14,9 @@ fn init_runtime() -> Result<()> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     std::env::set_current_dir(&exe_dir)?;
-    std::fs::create_dir_all(exe_dir.join("config"))?;
+    for dir in ["config", "logs"] {
+        std::fs::create_dir_all(exe_dir.join(dir))?;
+    }
     Ok(())
 }
 
@@ -20,12 +24,16 @@ fn init_runtime() -> Result<()> {
 async fn main() -> Result<()> {
     init_runtime()?;
 
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("logs/campus-guard.log")?;
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "campus_guard=debug".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(std::sync::Mutex::new(log_file)))
         .init();
 
     info!("CampusGuard starting - process supervisor");

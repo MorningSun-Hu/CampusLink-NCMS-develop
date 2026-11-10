@@ -43,7 +43,27 @@ pub fn is_ime_class(name: &str) -> bool {
 }
 
 pub fn should_steal_focus(foreground_class: &str, allow_ime: bool) -> bool {
-    !(allow_ime && is_ime_class(foreground_class))
+    if allow_ime && is_ime_class(foreground_class) {
+        return false;
+    }
+    if allow_ime {
+        is_escape_foreground(foreground_class)
+    } else {
+        true
+    }
+}
+
+/// Desktop, explorer, console and taskbar — windows used to leave the overlay.
+pub fn is_escape_foreground(class_name: &str) -> bool {
+    matches!(
+        class_name,
+        "ConsoleWindowClass" | "Progman" | "WorkerW" | "Shell_TrayWnd" | "CabinetWClass"
+    )
+}
+
+/// Request the name field only until it has claimed keyboard focus once.
+pub fn should_request_name_focus(already_claimed: bool, widget_has_focus: bool) -> bool {
+    !already_claimed && !widget_has_focus
 }
 
 /// Virtual-key constants used by tests and the Windows hook.
@@ -159,5 +179,21 @@ mod tests {
         assert!(should_steal_focus("Progman", true));
         assert!(should_steal_focus("WorkerW", true));
         assert!(should_steal_focus("Shell_TrayWnd", true));
+    }
+
+    #[test]
+    fn name_focus_stops_after_first_claim() {
+        assert!(should_request_name_focus(false, false));
+        assert!(!should_request_name_focus(false, true));
+        assert!(!should_request_name_focus(true, false));
+        assert!(!should_request_name_focus(true, true));
+    }
+
+    #[test]
+    fn open_mode_does_not_steal_from_unrelated_windows() {
+        assert!(!should_steal_focus("Chrome_WidgetWin_1", true));
+        assert!(!should_steal_focus("EguiWindow", true));
+        assert!(should_steal_focus("CabinetWClass", true));
+        assert!(should_steal_focus("Chrome_WidgetWin_1", false));
     }
 }

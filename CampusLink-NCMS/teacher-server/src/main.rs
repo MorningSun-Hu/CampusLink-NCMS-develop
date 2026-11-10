@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod app;
 mod api;
 mod domain;
@@ -7,6 +9,9 @@ mod middleware;
 mod discovery;
 mod crypto_util;
 mod proto;
+
+#[cfg(target_os = "windows")]
+mod win_status;
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -50,6 +55,9 @@ fn init_runtime() -> Result<()> {
 async fn main() -> Result<()> {
     init_runtime()?;
 
+    #[cfg(target_os = "windows")]
+    win_status::start("校园通教师端");
+
     // File appender with daily rotation, keep 14 days
     let file_appender = tracing_appender::rolling::daily("logs", "teacher-server");
 
@@ -59,7 +67,7 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| "teacher_server=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
-        .with(tracing_subscriber::fmt::layer().with_writer(file_appender))
+        .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(file_appender))
         .init();
 
     let config = Config::load()?;

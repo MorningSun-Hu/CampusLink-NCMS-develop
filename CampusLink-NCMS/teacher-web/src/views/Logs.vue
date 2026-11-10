@@ -4,7 +4,8 @@
       <h2 class="page-title">日志中心</h2>
       <div class="header-actions">
         <el-button type="primary" @click="exportLogs">导出 CSV</el-button>
-        <el-button @click="loadLogs">刷新</el-button>
+        <el-button type="success" :loading="collecting" @click="collectLogs">收集学生机日志</el-button>
+        <el-button @click="refreshAll">刷新</el-button>
       </div>
     </div>
 
@@ -45,14 +46,28 @@
       </el-table-column>
       <el-table-column prop="created_at" label="时间" width="180" />
     </el-table>
+
+    <h3 class="section-title">学生机运行日志</h3>
+    <el-table :data="agentFiles" v-loading="agentLoading" border stripe>
+      <el-table-column prop="device_id" label="设备ID" width="280" />
+      <el-table-column prop="file_name" label="文件" />
+      <el-table-column prop="size" label="大小" width="120">
+        <template #default="{ row }">{{ formatSize(row.size) }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="120">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="downloadFile(row)">下载</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { queryLogs, exportLogsUrl } from '@/api/logs'
-import type { LogEntry } from '@/api/logs'
+import { queryLogs, exportLogsUrl, collectStudentLogs, listAgentLogs, downloadAgentLog } from '@/api/logs'
+import type { LogEntry, AgentLogFileInfo } from '@/api/logs'
 
 const logs = ref<LogEntry[]>([])
 const loading = ref(false)
@@ -61,6 +76,9 @@ const deviceId = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const collecting = ref(false)
+const agentLoading = ref(false)
+const agentFiles = ref<AgentLogFileInfo[]>([])
 
 async function loadLogs() {
   loading.value = true
@@ -101,8 +119,61 @@ function exportLogs() {
   window.open(exportLogsUrl(params), '_blank')
 }
 
+async function loadAgentFiles() {
+  agentLoading.value = true
+  try {
+    const res = await listAgentLogs()
+    if (res.code === 0 && res.data) {
+      agentFiles.value = res.data
+    }
+  } catch (e: any) {
+    ElMessage.error('查询学生机日志失败: ' + (e?.message || '未知错误'))
+  } finally {
+    agentLoading.value = false
+  }
+}
+
+async function collectLogs() {
+  collecting.value = true
+  try {
+    const res = await collectStudentLogs()
+    if (res.code === 0) {
+      ElMessage.success(res.data || '已向在线学生机下发收集指令')
+      window.setTimeout(() => {
+        loadAgentFiles()
+      }, 2500)
+    } else {
+      ElMessage.error(res.message || '收集失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('收集学生机日志失败: ' + (e?.message || '未知错误'))
+  } finally {
+    collecting.value = false
+  }
+}
+
+function formatSize(size: number) {
+  if (size < 1024) return size + ' B'
+  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB'
+  return (size / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+async function downloadFile(row: AgentLogFileInfo) {
+  try {
+    await downloadAgentLog(row.device_id, row.file_name)
+  } catch (e: any) {
+    ElMessage.error('下载失败: ' + (e?.message || '未知错误'))
+  }
+}
+
+function refreshAll() {
+  loadLogs()
+  loadAgentFiles()
+}
+
 onMounted(() => {
   loadLogs()
+  loadAgentFiles()
 })
 </script>
 
@@ -136,5 +207,10 @@ onMounted(() => {
 .header-actions {
   display: flex;
   gap: 8px;
+}
+
+.section-title {
+  font-size: 16px;
+  margin: 24px 0 12px;
 }
 </style>

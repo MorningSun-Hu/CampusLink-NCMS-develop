@@ -17,6 +17,7 @@ mod usage_handlers;
 mod user_handlers;
 
 use axum::{routing::{get, post, delete, put}, Router, middleware};
+use axum::extract::DefaultBodyLimit;
 use axum::response::Html;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
@@ -28,7 +29,10 @@ use usage_handlers::{list_usage_handler, export_usage_handler, end_usage_handler
 use inspection_handlers::{submit_inspection_handler, list_inspections_handler, list_alerts_handler, resolve_alert_handler, export_inspection_handler};
 use photo_handlers::{upload_photo_handler, get_photo_handler, list_photos_handler};
 use hardware_handlers::{submit_snapshot_handler, get_snapshot_handler, list_changes_handler};
-use log_handlers::{query_logs_handler, export_logs_handler};
+use log_handlers::{
+    query_logs_handler, export_logs_handler, collect_student_logs_handler,
+    upload_agent_logs_handler, list_agent_logs_handler, download_agent_log_handler,
+};
 use process_guard_handlers::{create_policy_handler, update_policy_handler, list_policies_handler, delete_policy_handler};
 use dashboard_handlers::dashboard_overview_handler;
 use student_handlers::{create_student_handler, list_students_handler, get_student_handler, update_student_handler, delete_student_handler, import_students_handler, export_students_handler, student_import_template_handler, reset_student_password_handler};
@@ -110,6 +114,10 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/inspection/submit", post(submit_inspection_handler))
         .route("/api/hardware/snapshot", post(submit_snapshot_handler))
         .route("/api/policies/process-guard/sync", get(list_policies_handler))
+        .route(
+            "/api/logs/agent-files",
+            post(upload_agent_logs_handler).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
         .route("/ws", get(ws_handler));
 
     // Protected routes (auth required)
@@ -137,6 +145,9 @@ pub async fn create_app(pool: &SqlitePool, database_url: String) -> Router {
         .route("/api/hardware/changes", get(list_changes_handler))
         .route("/api/logs", get(query_logs_handler))
         .route("/api/logs/export", get(export_logs_handler))
+        .route("/api/logs/collect-student", post(collect_student_logs_handler))
+        .route("/api/logs/agent-files", get(list_agent_logs_handler))
+        .route("/api/logs/agent-files/download", get(download_agent_log_handler))
         .route("/api/policies/process-guard", post(create_policy_handler))
         .route("/api/policies/process-guard/:id", post(update_policy_handler))
         .route("/api/policies/process-guard", get(list_policies_handler))

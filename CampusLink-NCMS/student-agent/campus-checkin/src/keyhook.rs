@@ -6,7 +6,7 @@ mod keyhook_impl {
     use windows::core::HSTRING;
     use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::System::Threading::AttachThreadInput;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VK_CONTROL,
         VK_DELETE, VK_ESCAPE, VK_F4, VK_LCONTROL, VK_LMENU, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU,
@@ -17,9 +17,10 @@ mod keyhook_impl {
         BringWindowToTop, CallNextHookEx, DispatchMessageW, EnumWindows, FindWindowW,
         GetClassNameW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
         SetForegroundWindow, SetWindowPos, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-        HWND_TOP, HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_SHOWWINDOW,
+        AllowSetForegroundWindow, ShowWindow, ASFW_ANY, HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE,
         WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        IsIconic,
     };
 
     const LLKHF_ALTDOWN: u32 = 0x20;
@@ -209,25 +210,19 @@ mod keyhook_impl {
                 return;
             }
             let fg_thread = GetWindowThreadProcessId(fg, None);
-            let self_thread = GetCurrentThreadId();
-            let _ = AttachThreadInput(self_thread, fg_thread, true);
+            let target_thread = GetWindowThreadProcessId(hwnd, None);
+            let attached = fg_thread != 0 && target_thread != 0 && fg_thread != target_thread;
+            if attached {
+                let _ = AttachThreadInput(target_thread, fg_thread, true);
+            }
+            if IsIconic(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+            }
             let _ = BringWindowToTop(hwnd);
             let _ = SetForegroundWindow(hwnd);
-            let insert_after = if ALLOW_IME.load(Ordering::SeqCst) {
-                HWND_TOP
-            } else {
-                HWND_TOPMOST
-            };
-            let _ = SetWindowPos(
-                hwnd,
-                insert_after,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-            );
-            let _ = AttachThreadInput(self_thread, fg_thread, false);
+            if attached {
+                let _ = AttachThreadInput(target_thread, fg_thread, false);
+            }
         }
     }
 
@@ -244,7 +239,7 @@ mod keyhook_impl {
                         }
                     }
                 }
-                std::thread::sleep(Duration::from_millis(120));
+                std::thread::sleep(Duration::from_millis(200));
             }
         });
     }
@@ -255,6 +250,7 @@ mod keyhook_impl {
         }
         GUARDS_ON.store(true, Ordering::SeqCst);
         ALLOW_IME.store(allow_ime, Ordering::SeqCst);
+        let _ = unsafe { AllowSetForegroundWindow(ASFW_ANY) };
         start_taskmgr_guard();
         start_focus_keeper();
         if allow_ime {
@@ -286,6 +282,21 @@ mod keyhook_impl {
     pub fn stop() {
         GUARDS_ON.store(false, Ordering::SeqCst);
     }
+
+    pub fn claim_foreground() {
+        let hwnd = find_checkin_hwnd();
+        if hwnd.is_invalid() {
+            return;
+        }
+        let fg = unsafe { GetForegroundWindow() };
+        if fg == hwnd {
+            return;
+        }
+        let class = window_class_name(fg);
+        if overlay::should_steal_focus(&class, ALLOW_IME.load(Ordering::SeqCst)) {
+            restore_foreground(hwnd);
+        }
+    }
 }
 
 pub fn start_keyboard_hook(allow_ime: bool) {
@@ -298,4 +309,9 @@ pub fn start_keyboard_hook(allow_ime: bool) {
 pub fn stop_keyboard_hook() {
     #[cfg(target_os = "windows")]
     keyhook_impl::stop();
+}
+
+pub fn claim_foreground() {
+    #[cfg(target_os = "windows")]
+    keyhook_impl::claim_foreground();
 }

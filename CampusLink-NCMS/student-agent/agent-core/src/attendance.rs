@@ -15,25 +15,18 @@ const EXIT_TEACHER: i32 = 10;
 
 #[cfg(target_os = "windows")]
 mod console_win {
-    #[link(name = "kernel32")]
-    extern "system" {
-        pub fn GetConsoleWindow() -> *mut std::ffi::c_void;
-    }
     #[link(name = "user32")]
     extern "system" {
-        pub fn ShowWindow(hwnd: *mut std::ffi::c_void, ncmdshow: i32) -> i32;
+        pub fn AllowSetForegroundWindow(process_id: u32) -> i32;
     }
 }
 
-fn set_console_visible(visible: bool) {
+fn allow_foreground_for(pid: u32) {
     #[cfg(target_os = "windows")]
     unsafe {
-        let hwnd = console_win::GetConsoleWindow();
-        if !hwnd.is_null() {
-            console_win::ShowWindow(hwnd, if visible { 5 } else { 0 });
-        }
+        let _ = console_win::AllowSetForegroundWindow(pid);
     }
-    let _ = visible;
+    let _ = pid;
 }
 
 #[derive(Debug, Serialize)]
@@ -146,7 +139,6 @@ pub fn start_admission_monitor(config: Config) {
 
     tokio::spawn(async move {
         info!("Admission monitor started (gen={}, mode={})", gen, mode);
-        set_console_visible(false);
         loop {
             if ADMISSION_GEN.load(Ordering::SeqCst) != gen {
                 info!("Admission monitor gen={} cancelled", gen);
@@ -182,6 +174,7 @@ pub fn start_admission_monitor(config: Config) {
                     cmd.creation_flags(0x08000000);
                 }
                 let mut child = cmd.spawn()?;
+                allow_foreground_for(child.id());
                 child.wait()
             })
             .await;
@@ -215,7 +208,6 @@ pub fn start_admission_monitor(config: Config) {
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        set_console_visible(true);
         info!("Admission monitor gen={} stopped", gen);
     });
 }

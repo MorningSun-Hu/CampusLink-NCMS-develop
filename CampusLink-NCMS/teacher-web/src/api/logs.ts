@@ -39,3 +39,32 @@ export function exportLogsUrl(params?: {
   if (params?.date_from) searchParams.set('date_from', params.date_from)
   return `/api/logs/export?${searchParams.toString()}`
 }
+
+export interface AgentLogFileInfo {
+  device_id: string
+  file_name: string
+  size: number
+}
+
+export async function collectStudentLogs() {
+  const resp = await api.post('/logs/collect-student')
+  return resp.data
+}
+
+export async function listAgentLogs() {
+  const resp = await api.get('/logs/agent-files')
+  return resp.data
+}
+
+export async function downloadAgentLog(deviceId: string, file: string) {
+  const resp = await api.get('/logs/agent-files/download', {
+    params: { device_id: deviceId, file },
+    responseType: 'blob',
+  })
+  const url = URL.createObjectURL(resp.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = file
+  a.click()
+  URL.revokeObjectURL(url)
+}

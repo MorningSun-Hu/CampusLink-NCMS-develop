@@ -61,6 +61,7 @@ struct CheckinApp {
     ime_initialized: bool,
     submitted: bool,
     name_focused: bool,
+    window_activated: bool,
 }
 
 impl CheckinApp {
@@ -92,6 +93,7 @@ impl CheckinApp {
             ime_initialized: false,
             submitted: false,
             name_focused: false,
+            window_activated: false,
         }
     }
 
@@ -378,6 +380,12 @@ impl eframe::App for CheckinApp {
             self.apply_worker(result);
         }
 
+        if !self.window_activated {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            keyhook::claim_foreground();
+            self.window_activated = true;
+        }
+
         if !self.ime_initialized {
             match self.mode {
                 Mode::Open => {}
@@ -559,10 +567,10 @@ impl CheckinApp {
                     [ui.available_width(), 36.0],
                     egui::TextEdit::singleline(&mut self.name_input).hint_text("请输入姓名"),
                 );
-                if !name_resp.has_focus() {
+                if overlay::should_request_name_focus(self.name_focused, name_resp.has_focus()) {
                     name_resp.request_focus();
                 }
-                self.name_focused = name_resp.has_focus();
+                self.name_focused = self.name_focused || name_resp.has_focus();
                 if name_resp.has_focus() && !self.ime_initialized {
                     if enable_chinese_ime() {
                         self.ime_initialized = true;
@@ -669,7 +677,7 @@ fn enable_chinese_ime() -> bool {
             ImmAssociateContextEx, ImmGetContext, ImmReleaseContext, ImmSetOpenStatus, HIMC,
             IACE_CHILDREN, IACE_DEFAULT,
         };
-        use windows::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, KLF_ACTIVATE};
+        use windows::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, KLF_SUBSTITUTE_OK};
         use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
         unsafe {
@@ -679,7 +687,7 @@ fn enable_chinese_ime() -> bool {
                 return false;
             }
             let _ = ImmAssociateContextEx(hwnd, HIMC(std::ptr::null_mut()), IACE_DEFAULT | IACE_CHILDREN);
-            let _ = LoadKeyboardLayoutW(w!("00000804"), KLF_ACTIVATE);
+            let _ = LoadKeyboardLayoutW(w!("00000804"), KLF_SUBSTITUTE_OK);
             let himc = ImmGetContext(hwnd);
             if !himc.0.is_null() {
                 let _ = ImmSetOpenStatus(himc, BOOL::from(true));

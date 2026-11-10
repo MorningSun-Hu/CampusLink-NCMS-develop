@@ -47,6 +47,13 @@ pub enum WebSocketCommand {
         #[serde(default)]
         timestamp: u64,
     },
+    /// 收集本地运行日志并上传到教师端
+    CollectLogs {
+        #[serde(default)]
+        device_id: String,
+        #[serde(default)]
+        timestamp: u64,
+    },
     /// 超级密码更新
     SuperPwd {
         password: String,
@@ -224,6 +231,20 @@ impl CommandHandler {
                 }
                 info!("Received checkin trigger command, mode={}", self.config.current_mode);
                 crate::attendance::start_admission_monitor(self.config.clone());
+            }
+
+            WebSocketCommand::CollectLogs { device_id, timestamp: _ } => {
+                if !device_id.is_empty() && device_id != self.config.device_id.as_deref().unwrap_or("") {
+                    debug!("Collect logs for different device {} ignored", device_id);
+                    return Ok(());
+                }
+                info!("Received collect logs command");
+                let config = self.config.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::log_collect::upload_agent_logs(&config).await {
+                        warn!("Upload agent logs failed: {}", e);
+                    }
+                });
             }
 
             WebSocketCommand::HeartbeatAck { ack_code, message } => {

@@ -12,6 +12,7 @@ pub mod student_auth;
 pub mod hardware;
 pub mod process_guard;
 pub mod netguard;
+pub mod log_collect;
 
 pub use config::Config;
 pub use register::*;
